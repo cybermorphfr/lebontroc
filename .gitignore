@@ -1,0 +1,26 @@
+# Node
+node_modules/
+*.tsbuildinfo
+
+# Next.js
+apps/web/.next/
+apps/web/out/
+
+# Rust
+apps/api/target/
+
+# Généré (schema.d.ts est régénéré depuis openapi.json)
+packages/api-client/src/schema.d.ts
+
+# Playwright
+e2e/test-results/
+e2e/playwright-report/
+e2e/blob-report/
+
+# Environnement
+.env
+.env.local
+.env.*.local
+
+# Divers
+.DS_Store

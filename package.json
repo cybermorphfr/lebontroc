@@ -1,0 +1,16 @@
+{
+  "name": "lebontroc",
+  "private": true,
+  "description": "Lebontroc — plateforme de troc d'objets entre particuliers",
+  "workspaces": [
+    "apps/web",
+    "packages/api-client",
+    "e2e"
+  ],
+  "scripts": {
+    "generate:client": "npm run generate --workspace=@lebontroc/api-client",
+    "lint": "npm run lint --workspace=web",
+    "typecheck": "npm run typecheck --workspace=web",
+    "e2e": "npm run test --workspace=e2e"
+  }
+}

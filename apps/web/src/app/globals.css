@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+/* Tokens Lebontroc — extraits du design system (specs/tokens/colors.css) */
+@theme {
+  --color-creme: #f5ead8;
+  --color-sable: #ebddc5;
+  --color-encre: #201e1d;
+
+  --color-terracotta-100: #fff2eb;
+  --color-terracotta-500: #d67f48;
+  --color-terracotta-700: #8c491a;
+  --color-terracotta-800: #643312;
+
+  --color-sauge-100: #f0fae1;
+  --color-sauge-500: #8fa073;
+  --color-sauge-700: #56633f;
+  --color-sauge-800: #3d472b;
+
+  --color-neutre-100: #f9f4ed;
+  --color-neutre-300: #dcd3c4;
+  --color-neutre-500: #a19786;
+  --color-neutre-700: #645c50;
+
+  --font-display: var(--font-caprasimo);
+  --font-sans: var(--font-figtree);
+
+  --radius-carte: 32px;
+}
+
+::selection {
+  background: #ffe1d0;
+}
+
+body {
+  background: var(--color-creme);
+  color: var(--color-encre);
+}

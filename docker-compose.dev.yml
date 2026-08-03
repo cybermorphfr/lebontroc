@@ -1,0 +1,49 @@
+# Dépendances de développement uniquement — l'API (cargo run) et le front
+# (next dev) tournent en natif sur la machine de dev.
+# Ports décalés pour cohabiter avec les autres projets du serveur.
+#   docker compose -f docker-compose.dev.yml up -d
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: lebontroc-dev-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: lebontroc
+      POSTGRES_PASSWORD: lebontroc
+      POSTGRES_DB: lebontroc
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - lebontroc_dev_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lebontroc"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    container_name: lebontroc-dev-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: lebontroc
+      MINIO_ROOT_PASSWORD: lebontroc-dev
+    ports:
+      - "127.0.0.1:9002:9000"
+      - "127.0.0.1:9003:9001"
+    volumes:
+      - lebontroc_dev_minio:/data
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: lebontroc-dev-mailpit
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
+
+volumes:
+  lebontroc_dev_db:
+  lebontroc_dev_minio:

@@ -1,0 +1,9 @@
+.git/
+node_modules/
+**/node_modules/
+apps/web/.next/
+apps/api/target/
+e2e/test-results/
+e2e/playwright-report/
+.env
+.env.*

@@ -1,0 +1,18 @@
+{
+  "name": "@lebontroc/api-client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Client TypeScript typé, généré depuis le contrat OpenAPI de l'API Rust",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "generate": "openapi-typescript openapi.json -o src/schema.d.ts"
+  },
+  "dependencies": {
+    "openapi-fetch": "^0.13.5"
+  },
+  "devDependencies": {
+    "openapi-typescript": "^7.6.1"
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Lebontroc API",
+    "description": "API de la plateforme de troc Lebontroc.",
+    "license": {
+      "name": ""
+    },
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Statut de l'API et de ses dépendances.",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Statut de l'API",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApiStatus": {
+        "type": "string",
+        "enum": [
+          "ok",
+          "degraded"
+        ]
+      },
+      "DbStatus": {
+        "type": "string",
+        "enum": [
+          "ok",
+          "unreachable"
+        ]
+      },
+      "HealthResponse": {
+        "type": "object",
+        "description": "Réponse du endpoint de santé.",
+        "required": [
+          "status",
+          "version",
+          "db"
+        ],
+        "properties": {
+          "db": {
+            "$ref": "#/components/schemas/DbStatus"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ApiStatus"
+          },
+          "version": {
+            "type": "string",
+            "description": "Version du build (crate + SHA court du commit).",
+            "example": "0.1.0+abc1234"
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "system",
+      "description": "Santé et méta de l'API"
+    }
+  ]
+}
