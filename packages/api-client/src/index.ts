@@ -25,6 +25,7 @@ export type ProposalResponse = components["schemas"]["ProposalResponse"];
 export type ProposalItemResponse = components["schemas"]["ProposalItemResponse"];
 export type MessageResponse = components["schemas"]["MessageResponse"];
 export type ConversationResponse = components["schemas"]["ConversationResponse"];
+export type TradeDetailResponse = components["schemas"]["TradeDetailResponse"];
 
 /**
  * Crée un client typé.

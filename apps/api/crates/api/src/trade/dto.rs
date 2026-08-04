@@ -39,6 +39,35 @@ pub struct TradeResponse {
 }
 
 #[derive(Deserialize, ToSchema)]
+pub struct ConfirmTradeRequest {
+    /// Le code à 6 chiffres montré par L'AUTRE partie.
+    pub code: String,
+}
+
+/// L'écran de rendez-vous : mon code à montrer, l'état des confirmations.
+#[derive(Serialize, ToSchema)]
+pub struct TradeDetailResponse {
+    pub id: Uuid,
+    pub proposal_id: Uuid,
+    /// `accepte`, `finalise` ou `annule`.
+    pub status: String,
+    pub delivery_mode: String,
+    /// Mon code de confirmation (à montrer en QR / 6 chiffres).
+    pub my_code: Option<String>,
+    /// J'ai saisi le code de l'autre.
+    pub i_confirmed: bool,
+    /// L'autre a saisi mon code.
+    pub other_confirmed: bool,
+    pub finalized_at: Option<DateTime<Utc>>,
+    pub cancelled_at: Option<DateTime<Utc>>,
+    /// J'ai demandé l'annulation (en attente de l'accord de l'autre).
+    pub cancel_requested_by_me: bool,
+    /// L'autre a demandé l'annulation (à moi de confirmer).
+    pub cancel_requested_by_other: bool,
+    pub accepted_at: DateTime<Utc>,
+}
+
+#[derive(Deserialize, ToSchema)]
 pub struct AcceptProposalRequest {
     /// `main_propre` ou `envoi`.
     pub delivery_mode: String,

@@ -108,6 +108,10 @@ fn spawn_proposal_expiry(state: AppState) {
             if count > 0 {
                 tracing::info!(count, "relances de messages non lus envoyées");
             }
+            let (reminded, cancelled) = api::trade::handlers::maintain_trades(&state).await;
+            if reminded > 0 || cancelled > 0 {
+                tracing::info!(reminded, cancelled, "maintenance des trocs");
+            }
         }
     });
 }

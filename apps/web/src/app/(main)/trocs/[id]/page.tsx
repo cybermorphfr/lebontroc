@@ -9,6 +9,7 @@ import { getCurrentUser } from "@/lib/server-api";
 import { STATUS_PROPOSITION } from "@/lib/format";
 
 import { AcceptButton } from "./AcceptButton";
+import { MeetupPanel } from "./MeetupPanel";
 import { Conversation } from "./Conversation";
 import { RefuseButton } from "./RefuseButton";
 
@@ -37,6 +38,12 @@ export default async function TrocDetailPage({
     client.GET("/proposals/{id}", { params: { path: { id } }, cache: "no-store" }),
     client.GET("/proposals/{id}/messages", { params: { path: { id } }, cache: "no-store" }),
   ]);
+  const { data: trade } = proposal?.trade
+    ? await client.GET("/trades/{id}", {
+        params: { path: { id: proposal.trade.id } },
+        cache: "no-store",
+      })
+    : { data: undefined };
 
   if (!proposal) {
     return (
@@ -103,16 +110,18 @@ export default async function TrocDetailPage({
         </section>
       ) : null}
 
-      {proposal.status === "acceptee" ? (
+      {proposal.status === "acceptee" && (!trade || trade.status === "accepte") ? (
         <p className="mt-4 rounded-3xl bg-sauge-100 p-4 text-sm text-sauge-800">
           🤝 Troc conclu{proposal.trade
             ? proposal.trade.delivery_mode === "main_propre"
               ? " — remise en main propre"
               : " — par envoi"
             : ""}
-          . Les objets sont réservés : convenez des détails dans la conversation.
+          . Les objets sont réservés : organisez la remise ci-dessous.
         </p>
       ) : null}
+
+      {trade ? <MeetupPanel trade={trade} /> : null}
 
       {proposal.superseded_by ? (
         <p className="mt-4 rounded-3xl bg-terracotta-100/60 p-4 text-sm text-terracotta-800">

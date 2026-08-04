@@ -11,11 +11,13 @@ const MODES = [
     value: "main_propre",
     label: "En main propre",
     hint: "Vous convenez d'un rendez-vous — lieu public recommandé.",
+    disabled: false,
   },
   {
     value: "envoi",
-    label: "Par envoi",
-    hint: "Chacun expédie son colis (les détails arrivent bientôt).",
+    label: "Par envoi — bientôt",
+    hint: "L'envoi arrive après la bêta. En attendant : main propre.",
+    disabled: true,
   },
 ];
 
@@ -65,7 +67,7 @@ export function AcceptButton({ proposalId }: { proposalId: string }) {
             <button
               key={mode.value}
               onClick={() => accept(mode.value)}
-              disabled={busy}
+              disabled={busy || mode.disabled}
               className="flex flex-col items-start gap-0.5 rounded-3xl bg-sable p-4 text-left transition-colors hover:bg-terracotta-100/60 disabled:opacity-60"
             >
               <span className="font-display text-base">{mode.label}</span>

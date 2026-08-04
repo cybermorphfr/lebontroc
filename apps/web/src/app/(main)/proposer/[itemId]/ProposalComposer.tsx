@@ -144,6 +144,10 @@ export function ProposalComposer({
                 Plafond : {plafondEuros} € — la soulte ne peut pas dépasser 50 % de la valeur du
                 meilleur objet de l&apos;échange.
               </p>
+              <p className="rounded-2xl bg-terracotta-100/60 px-3 py-2 text-xs text-terracotta-800">
+                Pendant la bêta, un troc avec soulte peut se négocier mais pas encore se
+                conclure — le paiement sécurisé arrive bientôt.
+              </p>
             </div>
           ) : (
             <p className="text-xs text-neutre-700">Choisis d&apos;abord des objets.</p>

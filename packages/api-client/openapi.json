@@ -1590,6 +1590,165 @@
         }
       }
     },
+    "/trades/{id}": {
+      "get": {
+        "tags": [
+          "trade"
+        ],
+        "summary": "L'écran de rendez-vous d'un troc (participants uniquement).",
+        "operationId": "get_trade",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant du troc",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Détail du troc",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeDetailResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/trades/{id}/cancel": {
+      "post": {
+        "tags": [
+          "trade"
+        ],
+        "summary": "Annulation d'un commun accord : la première demande, l'autre confirme.",
+        "operationId": "cancel_trade",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant du troc",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Demande enregistrée ou troc annulé",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeDetailResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Troc clos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/trades/{id}/confirm": {
+      "post": {
+        "tags": [
+          "trade"
+        ],
+        "summary": "Au rendez-vous : je saisis (ou scanne) le code de l'autre. Deux\nconfirmations → troc finalisé, objets troqués (Gherkin F4.1).",
+        "operationId": "confirm_trade",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant du troc",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmTradeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Confirmation enregistrée",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeDetailResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Code invalide ou troc clos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/troqueurs/{pseudo}": {
       "get": {
         "tags": [
@@ -1700,6 +1859,18 @@
             ],
             "format": "int32",
             "description": "Fourchette indicative en centimes (héritée de la racine)."
+          }
+        }
+      },
+      "ConfirmTradeRequest": {
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Le code à 6 chiffres montré par L'AUTRE partie."
           }
         }
       },
@@ -2575,6 +2746,79 @@
             ],
             "format": "int32",
             "description": "Position dans une liste de résultats (`search_result_clicked`)."
+          }
+        }
+      },
+      "TradeDetailResponse": {
+        "type": "object",
+        "description": "L'écran de rendez-vous : mon code à montrer, l'état des confirmations.",
+        "required": [
+          "id",
+          "proposal_id",
+          "status",
+          "delivery_mode",
+          "i_confirmed",
+          "other_confirmed",
+          "cancel_requested_by_me",
+          "cancel_requested_by_other",
+          "accepted_at"
+        ],
+        "properties": {
+          "accepted_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "cancel_requested_by_me": {
+            "type": "boolean",
+            "description": "J'ai demandé l'annulation (en attente de l'accord de l'autre)."
+          },
+          "cancel_requested_by_other": {
+            "type": "boolean",
+            "description": "L'autre a demandé l'annulation (à moi de confirmer)."
+          },
+          "cancelled_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "delivery_mode": {
+            "type": "string"
+          },
+          "finalized_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "i_confirmed": {
+            "type": "boolean",
+            "description": "J'ai saisi le code de l'autre."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "my_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Mon code de confirmation (à montrer en QR / 6 chiffres)."
+          },
+          "other_confirmed": {
+            "type": "boolean",
+            "description": "L'autre a saisi mon code."
+          },
+          "proposal_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "description": "`accepte`, `finalise` ou `annule`."
           }
         }
       },

@@ -242,6 +242,7 @@ pub async fn accept_proposal(
     proposal_id: Uuid,
     recipient_id: Uuid,
     delivery_mode: &str,
+    codes: (&str, &str), // (code du proposant, code du destinataire)
 ) -> sqlx::Result<AcceptOutcome> {
     let mut tx = pool.begin().await?;
 
@@ -309,7 +310,8 @@ pub async fn accept_proposal(
 
     let trade = sqlx::query_as::<_, Trade>(
         "INSERT INTO trades (proposal_id, proposer_id, recipient_id, delivery_mode, \
-         cash_cents, cash_direction) VALUES ($1, $2, $3, $4, $5, $6) \
+         cash_cents, cash_direction, proposer_code, recipient_code) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
          RETURNING id, proposal_id, status, delivery_mode, cash_cents, cash_direction, created_at",
     )
     .bind(proposal_id)
@@ -318,6 +320,8 @@ pub async fn accept_proposal(
     .bind(delivery_mode)
     .bind(proposal.cash_cents)
     .bind(&proposal.cash_direction)
+    .bind(codes.0)
+    .bind(codes.1)
     .fetch_one(&mut *tx)
     .await?;
 
@@ -443,4 +447,259 @@ pub async fn superseded_by(
         .bind(proposal_ids)
         .fetch_all(pool)
         .await
+}
+
+// ————— Remise en main propre (F4.1) —————
+
+/// Vue complète d'un troc pour l'écran de rendez-vous.
+#[derive(Debug, Clone, FromRow)]
+pub struct TradeDetail {
+    pub id: Uuid,
+    pub proposal_id: Uuid,
+    pub proposer_id: Uuid,
+    pub recipient_id: Uuid,
+    pub status: String,
+    pub delivery_mode: String,
+    pub cash_cents: i32,
+    pub created_at: DateTime<Utc>,
+    pub proposer_code: Option<String>,
+    pub recipient_code: Option<String>,
+    pub proposer_confirmed_at: Option<DateTime<Utc>>,
+    pub recipient_confirmed_at: Option<DateTime<Utc>>,
+    pub finalized_at: Option<DateTime<Utc>>,
+    pub cancelled_at: Option<DateTime<Utc>>,
+    pub cancel_requested_by: Option<Uuid>,
+}
+
+const TRADE_DETAIL_COLUMNS: &str = "id, proposal_id, proposer_id, recipient_id, status, \
+     delivery_mode, cash_cents, created_at, proposer_code, recipient_code, \
+     proposer_confirmed_at, recipient_confirmed_at, finalized_at, cancelled_at, \
+     cancel_requested_by";
+
+pub async fn get_trade(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<TradeDetail>> {
+    sqlx::query_as::<_, TradeDetail>(&format!(
+        "SELECT {TRADE_DETAIL_COLUMNS} FROM trades WHERE id = $1"
+    ))
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Issue d'une saisie de code au rendez-vous.
+pub enum ConfirmOutcome {
+    /// Confirmation enregistrée ; `true` si le troc vient d'être finalisé.
+    Confirmed {
+        finalized: bool,
+    },
+    WrongCode,
+    NotFound,
+    /// Le troc n'est plus en attente (finalisé ou annulé).
+    NotActive(String),
+}
+
+/// Chaque partie saisit le code de L'AUTRE. Quand les deux confirmations
+/// sont là : `finalise`, objets en `troque` (Gherkin F4.1) — atomique.
+pub async fn confirm_trade(
+    pool: &PgPool,
+    trade_id: Uuid,
+    user_id: Uuid,
+    code: &str,
+) -> sqlx::Result<ConfirmOutcome> {
+    let mut tx = pool.begin().await?;
+    let Some(trade) = sqlx::query_as::<_, TradeDetail>(&format!(
+        "SELECT {TRADE_DETAIL_COLUMNS} FROM trades WHERE id = $1 FOR UPDATE"
+    ))
+    .bind(trade_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    else {
+        return Ok(ConfirmOutcome::NotFound);
+    };
+    let is_proposer = trade.proposer_id == user_id;
+    if !is_proposer && trade.recipient_id != user_id {
+        return Ok(ConfirmOutcome::NotFound);
+    }
+    if trade.status != "accepte" {
+        return Ok(ConfirmOutcome::NotActive(trade.status));
+    }
+
+    // Le code attendu est celui de l'autre partie.
+    let expected = if is_proposer {
+        trade.recipient_code.as_deref()
+    } else {
+        trade.proposer_code.as_deref()
+    };
+    if expected != Some(code) {
+        return Ok(ConfirmOutcome::WrongCode);
+    }
+
+    let column = if is_proposer {
+        "proposer_confirmed_at"
+    } else {
+        "recipient_confirmed_at"
+    };
+    sqlx::query(&format!(
+        "UPDATE trades SET {column} = COALESCE({column}, now()) WHERE id = $1"
+    ))
+    .bind(trade_id)
+    .execute(&mut *tx)
+    .await?;
+
+    let (both,): (bool,) = sqlx::query_as(
+        "SELECT proposer_confirmed_at IS NOT NULL AND recipient_confirmed_at IS NOT NULL \
+         FROM trades WHERE id = $1",
+    )
+    .bind(trade_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if both {
+        sqlx::query("UPDATE trades SET status = 'finalise', finalized_at = now() WHERE id = $1")
+            .bind(trade_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "UPDATE items SET status = 'troque', updated_at = now() \
+             WHERE id IN (SELECT item_id FROM proposal_items WHERE proposal_id = $1)",
+        )
+        .bind(trade.proposal_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(ConfirmOutcome::Confirmed { finalized: both })
+}
+
+/// Issue d'une demande d'annulation d'un commun accord.
+pub enum CancelOutcome {
+    /// Première demande enregistrée : on attend l'accord de l'autre.
+    Pending,
+    /// Les deux sont d'accord : troc annulé, objets libérés.
+    Cancelled,
+    NotFound,
+    NotActive(String),
+}
+
+/// Annulation d'un commun accord : la première partie demande, la seconde
+/// confirme — le troc passe en `annule` et les objets redeviennent disponibles.
+pub async fn request_cancel(
+    pool: &PgPool,
+    trade_id: Uuid,
+    user_id: Uuid,
+) -> sqlx::Result<CancelOutcome> {
+    let mut tx = pool.begin().await?;
+    let Some(trade) = sqlx::query_as::<_, TradeDetail>(&format!(
+        "SELECT {TRADE_DETAIL_COLUMNS} FROM trades WHERE id = $1 FOR UPDATE"
+    ))
+    .bind(trade_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    else {
+        return Ok(CancelOutcome::NotFound);
+    };
+    if trade.proposer_id != user_id && trade.recipient_id != user_id {
+        return Ok(CancelOutcome::NotFound);
+    }
+    if trade.status != "accepte" {
+        return Ok(CancelOutcome::NotActive(trade.status));
+    }
+
+    match trade.cancel_requested_by {
+        None => {
+            sqlx::query("UPDATE trades SET cancel_requested_by = $2 WHERE id = $1")
+                .bind(trade_id)
+                .bind(user_id)
+                .execute(&mut *tx)
+                .await?;
+            tx.commit().await?;
+            Ok(CancelOutcome::Pending)
+        }
+        Some(by) if by == user_id => Ok(CancelOutcome::Pending),
+        Some(_) => {
+            cancel_trade_in_tx(&mut tx, trade_id, trade.proposal_id).await?;
+            tx.commit().await?;
+            Ok(CancelOutcome::Cancelled)
+        }
+    }
+}
+
+async fn cancel_trade_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    trade_id: Uuid,
+    proposal_id: Uuid,
+) -> sqlx::Result<()> {
+    sqlx::query("UPDATE trades SET status = 'annule', cancelled_at = now() WHERE id = $1")
+        .bind(trade_id)
+        .execute(&mut **tx)
+        .await?;
+    // Les objets encore réservés redeviennent disponibles.
+    sqlx::query(
+        "UPDATE items SET status = 'disponible', updated_at = now() \
+         WHERE status = 'reserve' \
+           AND id IN (SELECT item_id FROM proposal_items WHERE proposal_id = $1)",
+    )
+    .bind(proposal_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// Une partie prenante d'un troc à notifier (relance ou annulation).
+#[derive(Debug, Clone, FromRow)]
+pub struct TradeParty {
+    pub trade_id: Uuid,
+    pub email: String,
+    pub pseudo: String,
+    pub other_pseudo: String,
+}
+
+/// Relance J+7 : trocs acceptés sans finalisation depuis plus de 7 jours,
+/// jamais relancés. Marque et retourne les deux parties de chaque troc.
+pub async fn claim_meetup_reminders(pool: &PgPool) -> sqlx::Result<Vec<TradeParty>> {
+    sqlx::query_as::<_, TradeParty>(
+        "WITH stale AS ( \
+            UPDATE trades SET reminded_at = now() \
+            WHERE status = 'accepte' AND reminded_at IS NULL \
+              AND created_at < now() - interval '7 days' \
+            RETURNING id, proposer_id, recipient_id \
+         ) \
+         SELECT s.id AS trade_id, u.email::text AS email, u.pseudo::text AS pseudo, \
+                o.pseudo::text AS other_pseudo \
+         FROM stale s \
+         JOIN users u ON u.id IN (s.proposer_id, s.recipient_id) \
+         JOIN users o ON o.id = CASE WHEN u.id = s.proposer_id \
+                                     THEN s.recipient_id ELSE s.proposer_id END",
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Annulation automatique J+14 (Gherkin « rendez-vous fantôme ») : trocs
+/// acceptés jamais finalisés — annulés, objets libérés, parties notifiées.
+pub async fn auto_cancel_stale_trades(pool: &PgPool) -> sqlx::Result<Vec<TradeParty>> {
+    let mut tx = pool.begin().await?;
+    let stale: Vec<(Uuid, Uuid)> = sqlx::query_as(
+        "SELECT id, proposal_id FROM trades \
+         WHERE status = 'accepte' AND created_at < now() - interval '14 days' \
+         FOR UPDATE SKIP LOCKED",
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    for (trade_id, proposal_id) in &stale {
+        cancel_trade_in_tx(&mut tx, *trade_id, *proposal_id).await?;
+    }
+    let ids: Vec<Uuid> = stale.iter().map(|(id, _)| *id).collect();
+    let parties = sqlx::query_as::<_, TradeParty>(
+        "SELECT t.id AS trade_id, u.email::text AS email, u.pseudo::text AS pseudo, \
+                o.pseudo::text AS other_pseudo \
+         FROM trades t \
+         JOIN users u ON u.id IN (t.proposer_id, t.recipient_id) \
+         JOIN users o ON o.id = CASE WHEN u.id = t.proposer_id \
+                                     THEN t.recipient_id ELSE t.proposer_id END \
+         WHERE t.id = ANY($1)",
+    )
+    .bind(&ids)
+    .fetch_all(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(parties)
 }

@@ -16,4 +16,7 @@ pub fn router() -> Router<AppState> {
         .route("/proposals/{id}/accept", post(handlers::accept_proposal))
         .route("/proposals/{id}/counter", post(handlers::counter_proposal))
         .route("/me/proposals", get(handlers::my_proposals))
+        .route("/trades/{id}", get(handlers::get_trade))
+        .route("/trades/{id}/confirm", post(handlers::confirm_trade))
+        .route("/trades/{id}/cancel", post(handlers::cancel_trade))
 }
