@@ -124,7 +124,14 @@ jobs:
           E2E_BASE_URL: http://localhost:3000
       - name: Logs de la stack (en cas d'échec)
         if: failure()
-        run: docker compose -f docker-compose.ci.yml logs
+        # Émis en annotation ::error:: — lisible via l'API publique des checks,
+        # contrairement aux logs bruts du job.
+        run: |
+          docker compose -f docker-compose.ci.yml logs
+          LOGS=$(docker compose -f docker-compose.ci.yml ps -a 2>&1; echo; docker compose -f docker-compose.ci.yml logs --tail 40 2>&1)
+          LOGS="${LOGS//'%'/'%25'}"
+          LOGS="${LOGS//$'\n'/'%0A'}"
+          echo "::error title=stack-e2e::${LOGS}"
       - name: Rapport Playwright
         if: failure()
         uses: actions/upload-artifact@v4
