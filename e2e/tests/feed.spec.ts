@@ -97,9 +97,8 @@ test("le fil privilégie le local, la fiche montre la ville sans jamais l'adress
   await expect(page.getByRole("heading", { name: "Théière lointaine" })).toBeVisible();
   await expect(page.getByText("Paris", { exact: false }).first()).toBeVisible();
   await expect(page.getByText(/à \d+ km/).first()).toBeVisible();
-  const troc = page.getByRole("button", { name: "Proposer un troc" });
-  await expect(troc).toBeVisible();
-  await expect(troc).toBeDisabled();
+  // Depuis F3.1, le CTA est un lien actif vers le composeur de troc.
+  await expect(page.getByRole("link", { name: "Proposer un troc" })).toBeVisible();
   const contenu = await page.locator("main").innerText();
   expect(contenu).not.toContain("75001");
 
