@@ -13,7 +13,8 @@ use uuid::Uuid;
 use crate::catalog::dto::{
     CategoryNode, CreateItemRequest, FeedCard, FeedResponse, ItemDetailResponse, ItemOwnerResponse,
     ItemPhotoResponse, ItemResponse, PresignRequest, PresignedPhoto, PublicProfileResponse,
-    ReplacePhotosRequest, SearchResponse, UpdateItemRequest,
+    ReplacePhotosRequest, SearchResponse, UpdateItemRequest, UpdateWishlistRequest,
+    WishlistEntryDto,
 };
 use crate::error::ApiError;
 use crate::extract::CurrentUser;
@@ -96,6 +97,7 @@ fn item_response(
         delivery_pref: item.delivery_pref,
         exchange_wishes: item.exchange_wishes,
         accepts_soulte: item.accepts_soulte,
+        favorites_count: None,
         photos: photos
             .into_iter()
             .map(|p| ItemPhotoResponse {
@@ -658,6 +660,12 @@ pub async fn item_public(
     )
     .await;
 
+    let favorites_count = infra::favorites_repo::favorites_count(&state.pool, item.id).await?;
+    let is_favorited = match viewer.as_ref() {
+        Some(v) => infra::favorites_repo::is_favorited(&state.pool, v.user_id, item.id).await?,
+        None => false,
+    };
+
     let photos = infra::catalog_repo::photos_for_items(&state.pool, &[item.id]).await?;
     Ok(Json(ItemDetailResponse {
         item: item_response(&state, item, photos),
@@ -668,6 +676,8 @@ pub async fn item_public(
         },
         distance_km,
         is_owner,
+        favorites_count,
+        is_favorited,
     }))
 }
 
@@ -774,12 +784,20 @@ pub async fn my_items(
     for photo in infra::catalog_repo::photos_for_items(&state.pool, &ids).await? {
         photos_by_item.entry(photo.item_id).or_default().push(photo);
     }
+    // Le propriétaire voit combien de cœurs chaque objet a reçus (F2.3).
+    let counts: HashMap<Uuid, i64> = infra::favorites_repo::favorites_counts(&state.pool, &ids)
+        .await?
+        .into_iter()
+        .collect();
     Ok(Json(
         items
             .into_iter()
             .map(|item| {
                 let photos = photos_by_item.remove(&item.id).unwrap_or_default();
-                item_response(&state, item, photos)
+                let count = counts.get(&item.id).copied().unwrap_or(0);
+                let mut response = item_response(&state, item, photos);
+                response.favorites_count = Some(count);
+                response
             })
             .collect(),
     ))
@@ -962,4 +980,196 @@ pub async fn replace_photos(
 
     let photos = infra::catalog_repo::photos_for_items(&state.pool, &[item.id]).await?;
     Ok(Json(item_response(&state, item, photos)))
+}
+
+// ————— Favoris (F2.3) —————
+
+/// Mettre un objet en favori (idempotent). On ne met pas son propre objet
+/// en favori, ni un objet invisible.
+#[utoipa::path(
+    put,
+    path = "/items/{id}/favorite",
+    tag = "catalog",
+    params(("id" = Uuid, Path, description = "Identifiant de l'objet")),
+    responses(
+        (status = 204, description = "Favori posé"),
+        (status = 400, description = "Son propre objet", body = crate::error::ErrorResponse),
+        (status = 404, description = "Objet introuvable", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn favorite_item(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, ApiError> {
+    let item = infra::catalog_repo::get_item(&state.pool, id)
+        .await?
+        .filter(|i| i.status == "disponible")
+        .ok_or_else(|| ApiError::not_found("Cet objet n'existe pas (ou plus)."))?;
+    if item.owner_id == user.user_id {
+        return Err(ApiError::bad_request(
+            "objet_a_soi",
+            "C'est ton objet — pas besoin de le mettre en favori.",
+        ));
+    }
+    let nouveau = infra::favorites_repo::add_favorite(&state.pool, user.user_id, id).await?;
+    if nouveau {
+        telemetry::track(
+            &state,
+            "item_favorited",
+            Some(user.user_id),
+            json!({"item_id": id}),
+        )
+        .await;
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Retirer un favori (idempotent).
+#[utoipa::path(
+    delete,
+    path = "/items/{id}/favorite",
+    tag = "catalog",
+    params(("id" = Uuid, Path, description = "Identifiant de l'objet")),
+    responses((status = 204, description = "Favori retiré"))
+)]
+pub async fn unfavorite_item(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, ApiError> {
+    let existait = infra::favorites_repo::remove_favorite(&state.pool, user.user_id, id).await?;
+    if existait {
+        telemetry::track(
+            &state,
+            "item_unfavorited",
+            Some(user.user_id),
+            json!({"item_id": id}),
+        )
+        .await;
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Ma page favoris : les objets encore disponibles, cœur le plus récent
+/// d'abord — mêmes cartes que le fil.
+#[utoipa::path(
+    get,
+    path = "/me/favorites",
+    tag = "catalog",
+    responses((status = 200, description = "Mes favoris", body = [FeedCard]))
+)]
+pub async fn my_favorites(
+    State(state): State<AppState>,
+    user: CurrentUser,
+) -> Result<Json<Vec<FeedCard>>, ApiError> {
+    let coords = viewer_coords(&state, Some(&user)).await?;
+    let rows =
+        infra::favorites_repo::list_favorite_items(&state.pool, user.user_id, coords).await?;
+
+    let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
+    let mut cover_by_item: HashMap<Uuid, String> = HashMap::new();
+    for photo in infra::catalog_repo::photos_for_items(&state.pool, &ids).await? {
+        cover_by_item
+            .entry(photo.item_id)
+            .or_insert_with(|| state.photos.public_url(&photo.s3_key));
+    }
+    Ok(Json(
+        rows.into_iter()
+            .map(|row| FeedCard {
+                photo_url: cover_by_item.remove(&row.id),
+                id: row.id,
+                title: row.title,
+                condition: row.condition,
+                value_cents: row.value_cents,
+                city: row.city,
+                distance_km: row.distance_km.map(arrondi_km),
+                created_at: row.created_at,
+            })
+            .collect(),
+    ))
+}
+
+// ————— Liste d'envies (F2.3) —————
+
+/// Mes 3 lignes « ce que je cherche ».
+#[utoipa::path(
+    get,
+    path = "/me/wishlist",
+    tag = "me",
+    responses((status = 200, description = "Liste d'envies", body = [WishlistEntryDto]))
+)]
+pub async fn my_wishlist(
+    State(state): State<AppState>,
+    user: CurrentUser,
+) -> Result<Json<Vec<WishlistEntryDto>>, ApiError> {
+    let entries = infra::favorites_repo::list_wishlist(&state.pool, user.user_id).await?;
+    Ok(Json(
+        entries
+            .into_iter()
+            .map(|e| WishlistEntryDto {
+                category_id: e.category_id,
+                keywords: e.keywords,
+            })
+            .collect(),
+    ))
+}
+
+/// Remplace la liste d'envies (0 à 3 lignes ; lignes vides ignorées).
+#[utoipa::path(
+    put,
+    path = "/me/wishlist",
+    tag = "me",
+    request_body = UpdateWishlistRequest,
+    responses(
+        (status = 200, description = "Liste enregistrée", body = [WishlistEntryDto]),
+        (status = 400, description = "Liste invalide", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn update_wishlist(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(body): Json<UpdateWishlistRequest>,
+) -> Result<Json<Vec<WishlistEntryDto>>, ApiError> {
+    if body.entries.len() > 3 {
+        return Err(ApiError::bad_request(
+            "envies_trop_nombreuses",
+            "Trois envies maximum — garde les plus importantes.",
+        ));
+    }
+    let mut entries: Vec<(Option<i16>, String)> = Vec::new();
+    for entry in &body.entries {
+        let keywords = entry.keywords.trim().chars().take(120).collect::<String>();
+        if keywords.is_empty() && entry.category_id.is_none() {
+            continue; // ligne vide
+        }
+        if let Some(category_id) = entry.category_id {
+            if !infra::catalog_repo::category_exists(&state.pool, category_id).await? {
+                return Err(ApiError::bad_request(
+                    "categorie_inconnue",
+                    "Une des catégories choisies n'existe pas.",
+                ));
+            }
+        }
+        entries.push((entry.category_id, keywords));
+    }
+    infra::favorites_repo::replace_wishlist(&state.pool, user.user_id, &entries).await?;
+
+    telemetry::track(
+        &state,
+        "wishlist_updated",
+        Some(user.user_id),
+        json!({"filled": entries.len()}),
+    )
+    .await;
+
+    Ok(Json(
+        entries
+            .into_iter()
+            .map(|(category_id, keywords)| WishlistEntryDto {
+                category_id,
+                keywords,
+            })
+            .collect(),
+    ))
 }

@@ -111,6 +111,20 @@ fn vrai() -> bool {
     true
 }
 
+/// Une ligne « ce que je cherche » (3 max).
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct WishlistEntryDto {
+    pub category_id: Option<i16>,
+    /// Mots-clés libres (« poussette yoyo », 120 caractères max).
+    pub keywords: String,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct UpdateWishlistRequest {
+    /// Remplace la liste complète (0 à 3 lignes).
+    pub entries: Vec<WishlistEntryDto>,
+}
+
 /// Résultats de recherche — mêmes cartes que le fil.
 #[derive(Serialize, ToSchema)]
 pub struct SearchResponse {
@@ -161,6 +175,10 @@ pub struct ItemDetailResponse {
     /// Distance approximative en km depuis le visiteur connecté.
     pub distance_km: Option<f64>,
     pub is_owner: bool,
+    /// Nombre de cœurs posés sur l'objet.
+    pub favorites_count: i64,
+    /// Le visiteur connecté a-t-il mis cet objet en favori ?
+    pub is_favorited: bool,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -176,6 +194,8 @@ pub struct ItemResponse {
     pub delivery_pref: String,
     pub exchange_wishes: Option<String>,
     pub accepts_soulte: bool,
+    /// Nombre de cœurs — rempli dans le dressing du propriétaire.
+    pub favorites_count: Option<i64>,
     pub photos: Vec<ItemPhotoResponse>,
     pub created_at: DateTime<Utc>,
 }

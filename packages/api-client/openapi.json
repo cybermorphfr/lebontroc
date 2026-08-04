@@ -627,6 +627,76 @@
         }
       }
     },
+    "/items/{id}/favorite": {
+      "put": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Mettre un objet en favori (idempotent). On ne met pas son propre objet\nen favori, ni un objet invisible.",
+        "operationId": "favorite_item",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant de l'objet",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Favori posé"
+          },
+          "400": {
+            "description": "Son propre objet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Objet introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Retirer un favori (idempotent).",
+        "operationId": "unfavorite_item",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant de l'objet",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Favori retiré"
+          }
+        }
+      }
+    },
     "/items/{id}/photos": {
       "put": {
         "tags": [
@@ -822,6 +892,30 @@
         }
       }
     },
+    "/me/favorites": {
+      "get": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Ma page favoris : les objets encore disponibles, cœur le plus récent\nd'abord — mêmes cartes que le fil.",
+        "operationId": "my_favorites",
+        "responses": {
+          "200": {
+            "description": "Mes favoris",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/FeedCard"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/me/items": {
       "get": {
         "tags": [
@@ -839,6 +933,72 @@
                   "items": {
                     "$ref": "#/components/schemas/ItemResponse"
                   }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me/wishlist": {
+      "get": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Mes 3 lignes « ce que je cherche ».",
+        "operationId": "my_wishlist",
+        "responses": {
+          "200": {
+            "description": "Liste d'envies",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WishlistEntryDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Remplace la liste d'envies (0 à 3 lignes ; lignes vides ignorées).",
+        "operationId": "update_wishlist",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateWishlistRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Liste enregistrée",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WishlistEntryDto"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Liste invalide",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -1265,7 +1425,9 @@
         "required": [
           "item",
           "owner",
-          "is_owner"
+          "is_owner",
+          "favorites_count",
+          "is_favorited"
         ],
         "properties": {
           "distance_km": {
@@ -1275,6 +1437,15 @@
             ],
             "format": "double",
             "description": "Distance approximative en km depuis le visiteur connecté."
+          },
+          "favorites_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Nombre de cœurs posés sur l'objet."
+          },
+          "is_favorited": {
+            "type": "boolean",
+            "description": "Le visiteur connecté a-t-il mis cet objet en favori ?"
           },
           "is_owner": {
             "type": "boolean"
@@ -1374,6 +1545,14 @@
               "string",
               "null"
             ]
+          },
+          "favorites_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Nombre de cœurs — rempli dans le dressing du propriétaire."
           },
           "id": {
             "type": "string",
@@ -1696,6 +1875,21 @@
           }
         }
       },
+      "UpdateWishlistRequest": {
+        "type": "object",
+        "required": [
+          "entries"
+        ],
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WishlistEntryDto"
+            },
+            "description": "Remplace la liste complète (0 à 3 lignes)."
+          }
+        }
+      },
       "UserResponse": {
         "type": "object",
         "required": [
@@ -1726,6 +1920,26 @@
           },
           "pseudo": {
             "type": "string"
+          }
+        }
+      },
+      "WishlistEntryDto": {
+        "type": "object",
+        "description": "Une ligne « ce que je cherche » (3 max).",
+        "required": [
+          "keywords"
+        ],
+        "properties": {
+          "category_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "keywords": {
+            "type": "string",
+            "description": "Mots-clés libres (« poussette yoyo », 120 caractères max)."
           }
         }
       }

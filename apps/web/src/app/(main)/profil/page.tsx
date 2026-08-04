@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { createApiClient } from "@lebontroc/api-client";
 
 import { ResendVerification } from "@/components/ResendVerification";
 import { Tag } from "@/components/ui/Tag";
@@ -8,6 +10,7 @@ import { getCurrentUser, getSessions } from "@/lib/server-api";
 import { LogoutButton } from "./LogoutButton";
 import { ProfileForm } from "./ProfileForm";
 import { SessionsList } from "./SessionsList";
+import { WishlistForm } from "./WishlistForm";
 
 export const metadata: Metadata = {
   title: "Ton profil — Lebontroc",
@@ -19,6 +22,18 @@ export default async function ProfilPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/connexion");
   const sessions = await getSessions();
+
+  const jar = await cookies();
+  const client = createApiClient(process.env.API_INTERNAL_URL ?? "http://localhost:8080", {
+    cookie: jar
+      .getAll()
+      .map((c) => `${c.name}=${c.value}`)
+      .join("; "),
+  });
+  const [{ data: wishlist }, { data: categories }] = await Promise.all([
+    client.GET("/me/wishlist", { cache: "no-store" }),
+    client.GET("/categories", { cache: "no-store" }),
+  ]);
 
   return (
     <main className="flex flex-col gap-6 px-6 pb-16 sm:px-12 lg:px-24">
@@ -46,6 +61,17 @@ export default async function ProfilPage() {
           )}
         </div>
         <ProfileForm pseudo={user.pseudo} postalCode={user.postal_code} />
+      </section>
+
+      <section
+        id="envies"
+        className="flex max-w-xl flex-col gap-4 rounded-[32px] bg-sable p-6 shadow-sm"
+      >
+        <h2 className="font-display text-xl">Ce que je cherche</h2>
+        <WishlistForm
+          initial={wishlist ?? []}
+          roots={(categories ?? []).map((c) => ({ id: c.id, label: c.label }))}
+        />
       </section>
 
       <section className="flex max-w-xl flex-col gap-4 rounded-[32px] bg-sable p-6 shadow-sm">

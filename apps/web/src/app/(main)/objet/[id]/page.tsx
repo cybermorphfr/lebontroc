@@ -6,7 +6,9 @@ import { createApiClient, type ItemDetailResponse } from "@lebontroc/api-client"
 import { AvatarLetter } from "@/components/AvatarLetter";
 import { Tag } from "@/components/ui/Tag";
 import { ancrage, CONDITION_LABELS, DELIVERY_LABELS, distanceLabel } from "@/lib/format";
+import { getCurrentUser } from "@/lib/server-api";
 
+import { FavoriteButton } from "./FavoriteButton";
 import { Gallery } from "./Gallery";
 
 export const dynamic = "force-dynamic";
@@ -49,7 +51,11 @@ export default async function ObjetPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ source?: string }>;
 }) {
-  const [{ id }, { source }] = await Promise.all([params, searchParams]);
+  const [{ id }, { source }, viewer] = await Promise.all([
+    params,
+    searchParams,
+    getCurrentUser(),
+  ]);
   const detail = await fetchDetail(id, source);
 
   if (detail === null) {
@@ -71,7 +77,7 @@ export default async function ObjetPage({
     );
   }
 
-  const { item, owner, distance_km, is_owner } = detail;
+  const { item, owner, distance_km, is_owner, favorites_count, is_favorited } = detail;
 
   return (
     <main className="mx-auto w-full max-w-4xl px-6 pb-16">
@@ -92,7 +98,23 @@ export default async function ObjetPage({
 
         <div className="flex flex-col gap-4 md:w-1/2">
           <div className="flex flex-col gap-2">
-            <h1 className="font-display text-3xl">{item.title}</h1>
+            <div className="flex items-start justify-between gap-3">
+              <h1 className="font-display text-3xl">{item.title}</h1>
+              {is_owner ? (
+                favorites_count > 0 ? (
+                  <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-terracotta-100/60 px-4 py-2 text-sm text-terracotta-800">
+                    ♥ {favorites_count} favori{favorites_count > 1 ? "s" : ""}
+                  </span>
+                ) : null
+              ) : (
+                <FavoriteButton
+                  itemId={item.id}
+                  initialCount={favorites_count}
+                  initialFavorited={is_favorited}
+                  loggedIn={viewer !== null}
+                />
+              )}
+            </div>
             <p className="font-display text-xl text-terracotta-700">
               ~{Math.round(item.value_cents / 100)} € <span className="text-sm text-neutre-700 font-sans">valeur indicative</span>
             </p>

@@ -111,7 +111,10 @@ export function DressingGrid({ items }: { items: ItemResponse[] }) {
                 <span className="truncate text-sm font-semibold">{item.title}</span>
                 <div className="flex items-center justify-between gap-2">
                   <Tag variant={status.variant}>{status.label}</Tag>
-                  <span className="text-xs text-neutre-700">
+                  <span className="flex items-center gap-2 text-xs text-neutre-700">
+                    {(item.favorites_count ?? 0) > 0 ? (
+                      <span className="text-terracotta-700">♥ {item.favorites_count}</span>
+                    ) : null}
                     {Math.round(item.value_cents / 100)} €
                   </span>
                 </div>

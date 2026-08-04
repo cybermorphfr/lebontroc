@@ -881,3 +881,168 @@ async fn le_filtre_soulte_et_les_tris(pool: PgPool) {
         vec!["Objet sans argent", "Objet avec soulte"]
     );
 }
+
+// ————— Favoris et liste d'envies (F2.3) —————
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn favori_conserve_compteur_et_idempotence(pool: PgPool) {
+    let (app, emails) = app(pool);
+    let owner = verified_user(&app, &emails, "proprio@exemple.fr", "proprio").await;
+    let id = publish_titled(&app, &owner, "Mobile en bois").await;
+    let fan = verified_user_at(&app, &emails, "fan@exemple.fr", "fandetroc", "44300").await;
+
+    // Poser deux fois le cœur = un seul favori (idempotent).
+    for _ in 0..2 {
+        let response = call(
+            &app,
+            request("PUT", &format!("/items/{id}/favorite"), None, Some(&fan)),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    }
+
+    // Gherkin F2.3 : le favori est conservé quand je reviens.
+    let json = body_json(call(&app, request("GET", "/me/favorites", None, Some(&fan))).await).await;
+    let titres: Vec<&str> = json
+        .as_array()
+        .expect("favoris")
+        .iter()
+        .map(|i| i["title"].as_str().expect("titre"))
+        .collect();
+    assert_eq!(titres, vec!["Mobile en bois"]);
+
+    // Le propriétaire voit son compteur incrémenté — sans savoir qui.
+    let fiche = body_json(
+        call(
+            &app,
+            request("GET", &format!("/items/{id}/public"), None, Some(&owner)),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(fiche["favorites_count"], 1);
+    assert!(!fiche.to_string().contains("fandetroc"));
+
+    // Le fan voit l'état de son cœur ; son dressing à lui n'est pas concerné.
+    let fiche = body_json(
+        call(
+            &app,
+            request("GET", &format!("/items/{id}/public"), None, Some(&fan)),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(fiche["is_favorited"], true);
+
+    // Le compteur apparaît dans le dressing du propriétaire.
+    let dressing =
+        body_json(call(&app, request("GET", "/me/items", None, Some(&owner))).await).await;
+    assert_eq!(dressing[0]["favorites_count"], 1);
+
+    // Retrait (idempotent) : plus de favori, compteur à zéro.
+    for _ in 0..2 {
+        let response = call(
+            &app,
+            request("DELETE", &format!("/items/{id}/favorite"), None, Some(&fan)),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    }
+    let json = body_json(call(&app, request("GET", "/me/favorites", None, Some(&fan))).await).await;
+    assert!(json.as_array().expect("favoris").is_empty());
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn pas_de_favori_sur_son_propre_objet_ni_sur_un_masque(pool: PgPool) {
+    let (app, emails) = app(pool);
+    let owner = verified_user(&app, &emails, "ego@exemple.fr", "egotroc").await;
+    let id = publish_titled(&app, &owner, "Objet chéri").await;
+
+    let response = call(
+        &app,
+        request("PUT", &format!("/items/{id}/favorite"), None, Some(&owner)),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body_json(response).await["error"]["code"], "objet_a_soi");
+
+    // Un objet masqué disparaît des favoris existants et refuse les nouveaux.
+    let fan = verified_user_at(&app, &emails, "fan2@exemple.fr", "fan2", "44300").await;
+    let response = call(
+        &app,
+        request("PUT", &format!("/items/{id}/favorite"), None, Some(&fan)),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    let mut body = item_body(&[]);
+    body.as_object_mut().expect("objet").remove("photos");
+    body["status"] = serde_json::Value::String("masque".into());
+    let response = call(
+        &app,
+        request("PATCH", &format!("/items/{id}"), Some(body), Some(&owner)),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let json = body_json(call(&app, request("GET", "/me/favorites", None, Some(&fan))).await).await;
+    assert!(json.as_array().expect("favoris").is_empty());
+    let response = call(
+        &app,
+        request("PUT", &format!("/items/{id}/favorite"), None, Some(&fan)),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn liste_denvies_enregistree_et_bornee(pool: PgPool) {
+    let (app, emails) = app(pool);
+    let cookies = verified_user(&app, &emails, "envie@exemple.fr", "envieux").await;
+
+    // Vide au départ.
+    let json =
+        body_json(call(&app, request("GET", "/me/wishlist", None, Some(&cookies))).await).await;
+    assert!(json.as_array().expect("envies").is_empty());
+
+    // Deux lignes + une vide (ignorée).
+    let body = serde_json::json!({"entries": [
+        {"category_id": 31, "keywords": "poussette yoyo"},
+        {"category_id": null, "keywords": "vélo 16 pouces"},
+        {"category_id": null, "keywords": "   "}
+    ]});
+    let response = call(
+        &app,
+        request("PUT", "/me/wishlist", Some(body), Some(&cookies)),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let json =
+        body_json(call(&app, request("GET", "/me/wishlist", None, Some(&cookies))).await).await;
+    let envies = json.as_array().expect("envies");
+    assert_eq!(envies.len(), 2);
+    assert_eq!(envies[0]["keywords"], "poussette yoyo");
+    assert_eq!(envies[0]["category_id"], 31);
+    assert_eq!(envies[1]["keywords"], "vélo 16 pouces");
+
+    // Plus de 3 lignes → refus.
+    let body = serde_json::json!({"entries": [
+        {"keywords": "a", "category_id": null}, {"keywords": "b", "category_id": null},
+        {"keywords": "c", "category_id": null}, {"keywords": "d", "category_id": null}
+    ]});
+    let response = call(
+        &app,
+        request("PUT", "/me/wishlist", Some(body), Some(&cookies)),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    // Catégorie inconnue → refus.
+    let body = serde_json::json!({"entries": [{"category_id": 9999, "keywords": "x"}]});
+    let response = call(
+        &app,
+        request("PUT", "/me/wishlist", Some(body), Some(&cookies)),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}

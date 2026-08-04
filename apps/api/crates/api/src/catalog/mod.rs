@@ -23,6 +23,15 @@ pub fn router() -> Router<AppState> {
                 .delete(handlers::delete_item),
         )
         .route("/items/{id}/photos", put(handlers::replace_photos))
+        .route(
+            "/items/{id}/favorite",
+            put(handlers::favorite_item).delete(handlers::unfavorite_item),
+        )
         .route("/me/items", get(handlers::my_items))
+        .route("/me/favorites", get(handlers::my_favorites))
+        .route(
+            "/me/wishlist",
+            get(handlers::my_wishlist).put(handlers::update_wishlist),
+        )
         .route("/troqueurs/{pseudo}", get(handlers::public_profile))
 }

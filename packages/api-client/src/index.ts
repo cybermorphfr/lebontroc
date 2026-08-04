@@ -20,6 +20,7 @@ export type FeedResponse = components["schemas"]["FeedResponse"];
 export type FeedCard = components["schemas"]["FeedCard"];
 export type ItemDetailResponse = components["schemas"]["ItemDetailResponse"];
 export type SearchResponse = components["schemas"]["SearchResponse"];
+export type WishlistEntry = components["schemas"]["WishlistEntryDto"];
 
 /**
  * Crée un client typé.

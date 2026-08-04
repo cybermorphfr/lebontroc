@@ -6,5 +6,6 @@ pub mod auth_repo;
 pub mod catalog_repo;
 pub mod db;
 pub mod email;
+pub mod favorites_repo;
 pub mod s3;
 pub mod search;
