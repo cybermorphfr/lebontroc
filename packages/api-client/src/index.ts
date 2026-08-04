@@ -13,6 +13,9 @@ export type HealthResponse = components["schemas"]["HealthResponse"];
 export type UserResponse = components["schemas"]["UserResponse"];
 export type SessionResponse = components["schemas"]["SessionResponse"];
 export type ErrorResponse = components["schemas"]["ErrorResponse"];
+export type CategoryNode = components["schemas"]["CategoryNode"];
+export type ItemResponse = components["schemas"]["ItemResponse"];
+export type ItemPhotoResponse = components["schemas"]["ItemPhotoResponse"];
 
 /**
  * Crée un client typé.

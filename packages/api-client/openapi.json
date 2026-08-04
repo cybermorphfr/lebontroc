@@ -305,6 +305,30 @@
         }
       }
     },
+    "/categories": {
+      "get": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Arbre des catégories, fourchettes de valeur héritées de la racine.",
+        "operationId": "categories",
+        "responses": {
+          "200": {
+            "description": "Arbre des catégories",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CategoryNode"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "tags": [
@@ -319,6 +343,278 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/items": {
+      "post": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Publier un objet.",
+        "operationId": "create_item",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateItemRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Objet publié",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Champ invalide",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "E-mail non vérifié",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/items/photos/presign": {
+      "post": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "URL présignées d'upload (1–8 photos, 15 min).",
+        "operationId": "presign_photos",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PresignRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "URL de PUT présignées",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PresignedPhoto"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Fichier refusé",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "E-mail non vérifié",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/items/{id}": {
+      "get": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Fiche d'un objet. Le propriétaire voit tout ; les autres uniquement\n`disponible` (404 sinon — ne pas révéler un objet masqué).",
+        "operationId": "get_item",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant de l'objet",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Objet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Objet introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Modifier un objet (propriétaire uniquement).",
+        "operationId": "update_item",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant de l'objet",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateItemRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Objet mis à jour",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Champ ou transition invalide",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Objet introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/items/{id}/photos": {
+      "put": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Remplace la liste ordonnée des photos (réordonnancement, ajout, retrait).",
+        "operationId": "replace_photos",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant de l'objet",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplacePhotosRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Photos mises à jour",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Liste invalide",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Objet introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -405,6 +701,30 @@
           }
         }
       }
+    },
+    "/me/items": {
+      "get": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Mon dressing (tous statuts).",
+        "operationId": "my_items",
+        "responses": {
+          "200": {
+            "description": "Mes objets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ItemResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -415,6 +735,126 @@
           "ok",
           "degraded"
         ]
+      },
+      "CategoryNode": {
+        "type": "object",
+        "required": [
+          "id",
+          "slug",
+          "label",
+          "children"
+        ],
+        "properties": {
+          "children": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CategoryNode"
+            }
+          },
+          "icon": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Icône Lucide (racines uniquement)."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "label": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "value_max_cents": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "value_min_cents": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Fourchette indicative en centimes (héritée de la racine)."
+          }
+        }
+      },
+      "CreateItemRequest": {
+        "type": "object",
+        "required": [
+          "title",
+          "description",
+          "category_id",
+          "condition",
+          "value_cents",
+          "delivery_pref",
+          "photos"
+        ],
+        "properties": {
+          "category_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "condition": {
+            "type": "string",
+            "description": "`neuf`, `tres_bon_etat`, `bon_etat` ou `correct`.",
+            "example": "tres_bon_etat"
+          },
+          "delivery_pref": {
+            "type": "string",
+            "description": "`main_propre`, `envoi` ou `les_deux`.",
+            "example": "main_propre"
+          },
+          "description": {
+            "type": "string"
+          },
+          "draft_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Identifiant de brouillon côté client (funnel de télémétrie)."
+          },
+          "duration_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Durée du flux de publication côté client (KPI « moins de 2 minutes »)."
+          },
+          "exchange_wishes": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "photos": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Ids issus de /items/photos/presign, dans l'ordre d'affichage (1–8)."
+          },
+          "title": {
+            "type": "string",
+            "example": "Poussette Yoyo"
+          },
+          "value_cents": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Valeur indicative en centimes (100 à 200 000).",
+            "example": 15000
+          }
+        }
       },
       "DbStatus": {
         "type": "string",
@@ -476,6 +916,92 @@
           }
         }
       },
+      "ItemPhotoResponse": {
+        "type": "object",
+        "required": [
+          "photo_id",
+          "url",
+          "position"
+        ],
+        "properties": {
+          "photo_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "ItemResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "owner_id",
+          "title",
+          "description",
+          "category_id",
+          "condition",
+          "status",
+          "value_cents",
+          "delivery_pref",
+          "photos",
+          "created_at"
+        ],
+        "properties": {
+          "category_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "condition": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "delivery_pref": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "exchange_wishes": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "owner_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "photos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ItemPhotoResponse"
+            }
+          },
+          "status": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "value_cents": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "LoginRequest": {
         "type": "object",
         "required": [
@@ -488,6 +1014,73 @@
           },
           "password": {
             "type": "string"
+          }
+        }
+      },
+      "PresignFile": {
+        "type": "object",
+        "required": [
+          "content_type",
+          "size"
+        ],
+        "properties": {
+          "content_type": {
+            "type": "string",
+            "description": "`image/webp` ou `image/jpeg`.",
+            "example": "image/webp"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Taille en octets (≤ 5 Mo)."
+          }
+        }
+      },
+      "PresignRequest": {
+        "type": "object",
+        "required": [
+          "files"
+        ],
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PresignFile"
+            },
+            "description": "1 à 8 fichiers à uploader."
+          }
+        }
+      },
+      "PresignedPhoto": {
+        "type": "object",
+        "required": [
+          "photo_id",
+          "upload_url"
+        ],
+        "properties": {
+          "photo_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "upload_url": {
+            "type": "string",
+            "description": "URL de PUT direct vers le stockage (valable 15 min)."
+          }
+        }
+      },
+      "ReplacePhotosRequest": {
+        "type": "object",
+        "required": [
+          "photos"
+        ],
+        "properties": {
+          "photos": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Liste ordonnée (1–8) : photos déjà rattachées et/ou nouveaux uploads."
           }
         }
       },
@@ -564,6 +1157,50 @@
           }
         }
       },
+      "UpdateItemRequest": {
+        "type": "object",
+        "required": [
+          "title",
+          "description",
+          "category_id",
+          "condition",
+          "value_cents",
+          "delivery_pref",
+          "status"
+        ],
+        "properties": {
+          "category_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "condition": {
+            "type": "string"
+          },
+          "delivery_pref": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "exchange_wishes": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "description": "`disponible` ou `masque` uniquement."
+          },
+          "title": {
+            "type": "string"
+          },
+          "value_cents": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "UpdateProfileRequest": {
         "type": "object",
         "required": [
@@ -633,6 +1270,10 @@
     {
       "name": "me",
       "description": "Profil de l'utilisateur connecté"
+    },
+    {
+      "name": "catalog",
+      "description": "Catégories, objets et photos"
     }
   ]
 }

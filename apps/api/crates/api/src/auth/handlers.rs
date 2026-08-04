@@ -470,7 +470,11 @@ pub async fn track_event(
     user: Option<CurrentUser>,
     Json(body): Json<TrackRequest>,
 ) -> Result<StatusCode, ApiError> {
-    const AUTORISES: [&str; 1] = ["signup_started"];
+    const AUTORISES: [&str; 3] = [
+        "signup_started",
+        "item_publish_started",
+        "item_publish_abandoned",
+    ];
     if !AUTORISES.contains(&body.name.as_str()) {
         return Err(ApiError::bad_request(
             "evenement_inconnu",

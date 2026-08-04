@@ -49,6 +49,11 @@ lettre = { version = "0.11", default-features = false, features = [
   "builder",
 ] }
 
+# Stockage S3 (MinIO)
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-sdk-s3 = "1"
+aws-credential-types = "1"
+
 # OpenAPI
 utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
 

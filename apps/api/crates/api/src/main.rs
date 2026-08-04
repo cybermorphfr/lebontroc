@@ -28,13 +28,21 @@ async fn main() -> anyhow::Result<()> {
 
     let config = api::config::AppConfig::from_env()?;
     let mailer = mailer_from_env()?;
+    let photos = photo_store_from_env()?;
 
     // La base peut mettre quelques secondes à accepter les connexions au
     // démarrage de la stack : on retente avant d'abandonner.
     let pool = connect_with_retry(&database_url, 10).await?;
     infra::db::run_migrations(&pool).await?;
 
-    let app = api::router(AppState::new(pool, version, config, mailer));
+    if let Err(error) = photos.ensure_bucket().await {
+        // Non fatal : MinIO peut être en retard au boot, la présignature
+        // échouera proprement tant que le bucket manque.
+        tracing::error!(%error, "initialisation du bucket photos en échec");
+    }
+    spawn_orphan_purge(pool.clone(), photos.clone());
+
+    let app = api::router(AppState::new(pool, version, config, mailer, photos));
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;
     tracing::info!(port, "lebontroc-api démarrée");
@@ -60,6 +68,54 @@ fn mailer_from_env() -> anyhow::Result<infra::email::EmailSender> {
     let from = std::env::var("SMTP_FROM")
         .unwrap_or_else(|_| "Lebontroc <no-reply@lebontroc.brianplus.com>".to_string());
     infra::email::EmailSender::smtp(&host, port, username, password, &tls, &from)
+}
+
+fn photo_store_from_env() -> anyhow::Result<infra::s3::PhotoStore> {
+    let endpoint =
+        std::env::var("S3_ENDPOINT").map_err(|_| anyhow::anyhow!("S3_ENDPOINT manquante"))?;
+    let public_endpoint = std::env::var("S3_PUBLIC_ENDPOINT")
+        .map_err(|_| anyhow::anyhow!("S3_PUBLIC_ENDPOINT manquante"))?;
+    let bucket = std::env::var("S3_BUCKET").unwrap_or_else(|_| "lebontroc-photos".to_string());
+    let access_key =
+        std::env::var("S3_ACCESS_KEY").map_err(|_| anyhow::anyhow!("S3_ACCESS_KEY manquante"))?;
+    let secret_key =
+        std::env::var("S3_SECRET_KEY").map_err(|_| anyhow::anyhow!("S3_SECRET_KEY manquante"))?;
+    let region = std::env::var("S3_REGION").unwrap_or_else(|_| "us-east-1".to_string());
+    Ok(infra::s3::PhotoStore::s3(
+        &endpoint,
+        &public_endpoint,
+        &bucket,
+        &access_key,
+        &secret_key,
+        &region,
+    ))
+}
+
+/// Purge des uploads présignés jamais rattachés à un objet (> 24 h).
+fn spawn_orphan_purge(pool: sqlx::PgPool, photos: infra::s3::PhotoStore) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(6 * 3600)).await;
+            let cutoff = chrono::Utc::now() - chrono::Duration::hours(24);
+            match infra::catalog_repo::orphan_uploads_before(&pool, cutoff).await {
+                Ok(orphans) => {
+                    let count = orphans.len();
+                    for orphan in orphans {
+                        photos.delete_object(&orphan.s3_key).await;
+                        if let Err(error) =
+                            infra::catalog_repo::delete_photo_upload(&pool, orphan.photo_id).await
+                        {
+                            tracing::warn!(%error, "purge d'un upload orphelin en échec");
+                        }
+                    }
+                    if count > 0 {
+                        tracing::info!(count, "uploads orphelins purgés");
+                    }
+                }
+                Err(error) => tracing::warn!(%error, "lecture des uploads orphelins en échec"),
+            }
+        }
+    });
 }
 
 async fn connect_with_retry(database_url: &str, attempts: u32) -> anyhow::Result<sqlx::PgPool> {

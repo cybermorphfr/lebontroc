@@ -2,6 +2,7 @@
 //! généré par utoipa. La logique métier vit dans `domain`, l'IO dans `infra`.
 
 pub mod auth;
+pub mod catalog;
 pub mod config;
 pub mod error;
 pub mod extract;
@@ -15,6 +16,7 @@ use axum::http::Request;
 use axum::routing::get;
 use axum::{Json, Router};
 use infra::email::EmailSender;
+use infra::s3::PhotoStore;
 use sqlx::PgPool;
 use tower::ServiceBuilder;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
@@ -30,15 +32,23 @@ pub struct AppState {
     pub version: String,
     pub config: Arc<AppConfig>,
     pub mailer: EmailSender,
+    pub photos: PhotoStore,
 }
 
 impl AppState {
-    pub fn new(pool: PgPool, version: String, config: AppConfig, mailer: EmailSender) -> Self {
+    pub fn new(
+        pool: PgPool,
+        version: String,
+        config: AppConfig,
+        mailer: EmailSender,
+        photos: PhotoStore,
+    ) -> Self {
         Self {
             pool,
             version,
             config: Arc::new(config),
             mailer,
+            photos,
         }
     }
 
@@ -58,7 +68,13 @@ impl AppState {
             "sel-de-test".to_string(),
         );
         (
-            Self::new(pool, "0.1.0+test".to_string(), config, mailer),
+            Self::new(
+                pool,
+                "0.1.0+test".to_string(),
+                config,
+                mailer,
+                PhotoStore::mock(),
+            ),
             emails,
         )
     }
@@ -89,6 +105,7 @@ pub fn router(state: AppState) -> Router {
             get(|| async { Json(openapi::ApiDoc::openapi()) }),
         )
         .merge(auth::router())
+        .merge(catalog::router())
         .with_state(state)
         .layer(
             ServiceBuilder::new()

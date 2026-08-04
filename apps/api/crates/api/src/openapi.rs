@@ -27,11 +27,19 @@ use utoipa::{Modify, OpenApi};
         crate::auth::handlers::me,
         crate::auth::handlers::update_me,
         crate::auth::handlers::track_event,
+        crate::catalog::handlers::categories,
+        crate::catalog::handlers::presign_photos,
+        crate::catalog::handlers::create_item,
+        crate::catalog::handlers::get_item,
+        crate::catalog::handlers::my_items,
+        crate::catalog::handlers::update_item,
+        crate::catalog::handlers::replace_photos,
     ),
     tags(
         (name = "system", description = "Santé et méta de l'API"),
         (name = "auth", description = "Comptes, sessions et vérification e-mail"),
-        (name = "me", description = "Profil de l'utilisateur connecté")
+        (name = "me", description = "Profil de l'utilisateur connecté"),
+        (name = "catalog", description = "Catégories, objets et photos")
     ),
     modifiers(&CookieSecurity)
 )]

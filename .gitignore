@@ -24,3 +24,4 @@ e2e/blob-report/
 
 # Divers
 .DS_Store
+core.*

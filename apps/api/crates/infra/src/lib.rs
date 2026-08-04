@@ -3,5 +3,7 @@
 
 pub mod analytics;
 pub mod auth_repo;
+pub mod catalog_repo;
 pub mod db;
 pub mod email;
+pub mod s3;

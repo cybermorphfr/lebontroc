@@ -1,0 +1,554 @@
+//! Handlers du catalogue : catégories, publication, dressing, photos.
+
+use std::collections::HashMap;
+
+use axum::extract::{Path, State};
+use axum::http::StatusCode;
+use axum::Json;
+use domain::catalog as regles;
+use serde_json::json;
+use uuid::Uuid;
+
+use crate::catalog::dto::{
+    CategoryNode, CreateItemRequest, ItemPhotoResponse, ItemResponse, PresignRequest,
+    PresignedPhoto, ReplacePhotosRequest, UpdateItemRequest,
+};
+use crate::error::ApiError;
+use crate::extract::CurrentUser;
+use crate::telemetry;
+use crate::AppState;
+
+fn map_catalog_error(error: regles::CatalogError) -> ApiError {
+    match error {
+        regles::CatalogError::TitreInvalide => ApiError::bad_request(
+            "titre_invalide",
+            "Le titre doit faire entre 3 et 80 caractères.",
+        ),
+        regles::CatalogError::DescriptionInvalide => ApiError::bad_request(
+            "description_invalide",
+            "Décris ton objet en 10 à 2 000 caractères.",
+        ),
+        regles::CatalogError::ValeurInvalide => ApiError::bad_request(
+            "valeur_invalide",
+            "Indique une valeur entre 1 et 2 000 € — une estimation honnête suffit.",
+        ),
+        regles::CatalogError::EtatInconnu => {
+            ApiError::bad_request("etat_inconnu", "Choisis l'état de ton objet.")
+        }
+        regles::CatalogError::RemiseInconnue => {
+            ApiError::bad_request("remise_inconnue", "Choisis un mode de remise.")
+        }
+        regles::CatalogError::PhotosInvalides => {
+            ApiError::bad_request("photos_invalides", "Ajoute entre 1 et 8 photos.")
+        }
+        regles::CatalogError::StatutInterdit => ApiError::bad_request(
+            "statut_interdit",
+            "Tu peux seulement masquer ou remettre en ligne ton objet.",
+        ),
+    }
+}
+
+/// L'utilisateur doit avoir vérifié son e-mail pour publier (Gherkin F1.1).
+async fn require_verified(state: &AppState, user: CurrentUser) -> Result<(), ApiError> {
+    let compte = infra::auth_repo::find_user_by_id(&state.pool, user.user_id)
+        .await?
+        .ok_or_else(|| ApiError::unauthorized("Connecte-toi pour continuer."))?;
+    if compte.email_verified_at.is_none() {
+        return Err(ApiError::forbidden(
+            "email_non_verifie",
+            "Vérifie ton e-mail pour publier — regarde ta boîte mail.",
+        ));
+    }
+    Ok(())
+}
+
+fn valider_champs_objet(
+    title: &str,
+    description: &str,
+    condition: &str,
+    value_cents: i32,
+    delivery_pref: &str,
+) -> Result<(), ApiError> {
+    regles::valider_titre(title).map_err(map_catalog_error)?;
+    regles::valider_description(description).map_err(map_catalog_error)?;
+    regles::valider_condition(condition).map_err(map_catalog_error)?;
+    regles::valider_valeur(value_cents).map_err(map_catalog_error)?;
+    regles::valider_remise(delivery_pref).map_err(map_catalog_error)?;
+    Ok(())
+}
+
+fn item_response(
+    state: &AppState,
+    item: infra::catalog_repo::Item,
+    photos: Vec<infra::catalog_repo::ItemPhoto>,
+) -> ItemResponse {
+    ItemResponse {
+        id: item.id,
+        owner_id: item.owner_id,
+        title: item.title,
+        description: item.description,
+        category_id: item.category_id,
+        condition: item.condition,
+        status: item.status,
+        value_cents: item.value_cents,
+        delivery_pref: item.delivery_pref,
+        exchange_wishes: item.exchange_wishes,
+        photos: photos
+            .into_iter()
+            .map(|p| ItemPhotoResponse {
+                photo_id: p.photo_id,
+                url: state.photos.public_url(&p.s3_key),
+                position: p.position,
+            })
+            .collect(),
+        created_at: item.created_at,
+    }
+}
+
+/// Arbre des catégories, fourchettes de valeur héritées de la racine.
+#[utoipa::path(
+    get,
+    path = "/categories",
+    tag = "catalog",
+    responses((status = 200, description = "Arbre des catégories", body = [CategoryNode]))
+)]
+pub async fn categories(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<CategoryNode>>, ApiError> {
+    let flat = infra::catalog_repo::list_categories(&state.pool).await?;
+
+    // Fourchettes des racines, héritées par les descendants.
+    let root_ranges: HashMap<i16, (Option<i32>, Option<i32>)> = flat
+        .iter()
+        .filter(|c| c.parent_id.is_none())
+        .map(|c| (c.id, (c.value_min_cents, c.value_max_cents)))
+        .collect();
+    let root_of: HashMap<i16, i16> = flat
+        .iter()
+        .map(|c| {
+            let mut current = c;
+            while let Some(parent_id) = current.parent_id {
+                match flat.iter().find(|p| p.id == parent_id) {
+                    Some(parent) => current = parent,
+                    None => break,
+                }
+            }
+            (c.id, current.id)
+        })
+        .collect();
+
+    fn build(
+        flat: &[infra::catalog_repo::Category],
+        parent: Option<i16>,
+        root_ranges: &HashMap<i16, (Option<i32>, Option<i32>)>,
+        root_of: &HashMap<i16, i16>,
+    ) -> Vec<CategoryNode> {
+        flat.iter()
+            .filter(|c| c.parent_id == parent)
+            .map(|c| {
+                let (min, max) = c
+                    .value_min_cents
+                    .map(|m| (Some(m), c.value_max_cents))
+                    .unwrap_or_else(|| {
+                        root_of
+                            .get(&c.id)
+                            .and_then(|r| root_ranges.get(r).copied())
+                            .unwrap_or((None, None))
+                    });
+                CategoryNode {
+                    id: c.id,
+                    slug: c.slug.clone(),
+                    label: c.label.clone(),
+                    icon: c.icon.clone(),
+                    value_min_cents: min,
+                    value_max_cents: max,
+                    children: build(flat, Some(c.id), root_ranges, root_of),
+                }
+            })
+            .collect()
+    }
+
+    Ok(Json(build(&flat, None, &root_ranges, &root_of)))
+}
+
+/// URL présignées d'upload (1–8 photos, 15 min).
+#[utoipa::path(
+    post,
+    path = "/items/photos/presign",
+    tag = "catalog",
+    request_body = PresignRequest,
+    responses(
+        (status = 200, description = "URL de PUT présignées", body = [PresignedPhoto]),
+        (status = 400, description = "Fichier refusé", body = crate::error::ErrorResponse),
+        (status = 403, description = "E-mail non vérifié", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn presign_photos(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(body): Json<PresignRequest>,
+) -> Result<Json<Vec<PresignedPhoto>>, ApiError> {
+    require_verified(&state, user).await?;
+    regles::valider_nombre_photos(body.files.len()).map_err(map_catalog_error)?;
+
+    let mut result = Vec::with_capacity(body.files.len());
+    for file in &body.files {
+        let extension = match file.content_type.as_str() {
+            "image/webp" => "webp",
+            "image/jpeg" => "jpg",
+            _ => {
+                return Err(ApiError::bad_request(
+                    "type_refuse",
+                    "On n'a pas réussi à lire cette image. Essaie un autre format (JPG, WebP).",
+                ))
+            }
+        };
+        if file.size <= 0 || file.size > 5 * 1024 * 1024 {
+            return Err(ApiError::bad_request(
+                "fichier_trop_lourd",
+                "Cette photo dépasse 5 Mo après compression. Réessaie avec une autre.",
+            ));
+        }
+        let photo_id = Uuid::new_v4();
+        let key = format!("items/{photo_id}.{extension}");
+        let upload_url = state
+            .photos
+            .presign_put(&key, &file.content_type, i64::from(file.size))
+            .await
+            .map_err(ApiError::internal)?;
+        infra::catalog_repo::insert_photo_upload(
+            &state.pool,
+            photo_id,
+            user.user_id,
+            &key,
+            &file.content_type,
+            file.size,
+        )
+        .await?;
+        result.push(PresignedPhoto {
+            photo_id,
+            upload_url,
+        });
+    }
+    Ok(Json(result))
+}
+
+/// Résout et vérifie des uploads présignés appartenant à l'utilisateur.
+async fn resolve_uploads(
+    state: &AppState,
+    user_id: Uuid,
+    photo_ids: &[Uuid],
+) -> Result<Vec<infra::catalog_repo::PhotoUpload>, ApiError> {
+    let uploads = infra::catalog_repo::find_photo_uploads(&state.pool, user_id, photo_ids).await?;
+    let by_id: HashMap<Uuid, infra::catalog_repo::PhotoUpload> =
+        uploads.into_iter().map(|u| (u.photo_id, u)).collect();
+    let mut ordered = Vec::with_capacity(photo_ids.len());
+    for id in photo_ids {
+        let upload = by_id.get(id).cloned().ok_or_else(|| {
+            ApiError::bad_request(
+                "photo_inconnue",
+                "Une des photos n'a pas été trouvée. Réessaie l'envoi.",
+            )
+        })?;
+        if !state.photos.object_exists(&upload.s3_key).await {
+            return Err(ApiError::bad_request(
+                "photo_manquante",
+                "L'envoi d'une photo n'est pas terminé. Touche la photo pour réessayer.",
+            ));
+        }
+        ordered.push(upload);
+    }
+    Ok(ordered)
+}
+
+/// Publier un objet.
+#[utoipa::path(
+    post,
+    path = "/items",
+    tag = "catalog",
+    request_body = CreateItemRequest,
+    responses(
+        (status = 201, description = "Objet publié", body = ItemResponse),
+        (status = 400, description = "Champ invalide", body = crate::error::ErrorResponse),
+        (status = 403, description = "E-mail non vérifié", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn create_item(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(body): Json<CreateItemRequest>,
+) -> Result<(StatusCode, Json<ItemResponse>), ApiError> {
+    require_verified(&state, user).await?;
+    valider_champs_objet(
+        &body.title,
+        &body.description,
+        &body.condition,
+        body.value_cents,
+        &body.delivery_pref,
+    )?;
+    regles::valider_nombre_photos(body.photos.len()).map_err(map_catalog_error)?;
+    if !infra::catalog_repo::category_exists(&state.pool, body.category_id).await? {
+        return Err(ApiError::bad_request(
+            "categorie_inconnue",
+            "Choisis une catégorie pour que ton objet soit trouvable.",
+        ));
+    }
+
+    let uploads = resolve_uploads(&state, user.user_id, &body.photos).await?;
+    let exchange_wishes = body
+        .exchange_wishes
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.chars().take(300).collect::<String>());
+
+    let item = infra::catalog_repo::create_item(
+        &state.pool,
+        user.user_id,
+        infra::catalog_repo::NewItem {
+            title: body.title.trim(),
+            description: body.description.trim(),
+            category_id: body.category_id,
+            condition: &body.condition,
+            value_cents: body.value_cents,
+            delivery_pref: &body.delivery_pref,
+            exchange_wishes: exchange_wishes.as_deref(),
+        },
+        &uploads,
+    )
+    .await?;
+
+    for (index, upload) in uploads.iter().enumerate() {
+        telemetry::track(
+            &state,
+            "item_photo_uploaded",
+            Some(user.user_id),
+            json!({"draft_id": body.draft_id, "photo_index": index, "size_bytes": upload.byte_size}),
+        )
+        .await;
+    }
+    telemetry::track(
+        &state,
+        "item_published",
+        Some(user.user_id),
+        json!({
+            "draft_id": body.draft_id,
+            "category": item.category_id,
+            "photo_count": uploads.len(),
+            "duration_seconds": body.duration_seconds,
+            "has_exchange_wish": item.exchange_wishes.is_some(),
+            "delivery_pref": item.delivery_pref,
+            "condition": item.condition,
+            "value_cents": item.value_cents,
+        }),
+    )
+    .await;
+
+    let photos = infra::catalog_repo::photos_for_items(&state.pool, &[item.id]).await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(item_response(&state, item, photos)),
+    ))
+}
+
+/// Fiche d'un objet. Le propriétaire voit tout ; les autres uniquement
+/// `disponible` (404 sinon — ne pas révéler un objet masqué).
+#[utoipa::path(
+    get,
+    path = "/items/{id}",
+    tag = "catalog",
+    params(("id" = Uuid, Path, description = "Identifiant de l'objet")),
+    responses(
+        (status = 200, description = "Objet", body = ItemResponse),
+        (status = 404, description = "Objet introuvable", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn get_item(
+    State(state): State<AppState>,
+    user: Option<CurrentUser>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<ItemResponse>, ApiError> {
+    let introuvable = || ApiError::not_found("Cet objet n'existe pas (ou plus).");
+    let item = infra::catalog_repo::get_item(&state.pool, id)
+        .await?
+        .ok_or_else(introuvable)?;
+    let is_owner = user.map(|u| u.user_id == item.owner_id).unwrap_or(false);
+    if !is_owner && item.status != "disponible" {
+        return Err(introuvable());
+    }
+    let photos = infra::catalog_repo::photos_for_items(&state.pool, &[item.id]).await?;
+    Ok(Json(item_response(&state, item, photos)))
+}
+
+/// Mon dressing (tous statuts).
+#[utoipa::path(
+    get,
+    path = "/me/items",
+    tag = "catalog",
+    responses((status = 200, description = "Mes objets", body = [ItemResponse]))
+)]
+pub async fn my_items(
+    State(state): State<AppState>,
+    user: CurrentUser,
+) -> Result<Json<Vec<ItemResponse>>, ApiError> {
+    let items = infra::catalog_repo::list_items_by_owner(&state.pool, user.user_id).await?;
+    let ids: Vec<Uuid> = items.iter().map(|i| i.id).collect();
+    let mut photos_by_item: HashMap<Uuid, Vec<infra::catalog_repo::ItemPhoto>> = HashMap::new();
+    for photo in infra::catalog_repo::photos_for_items(&state.pool, &ids).await? {
+        photos_by_item.entry(photo.item_id).or_default().push(photo);
+    }
+    Ok(Json(
+        items
+            .into_iter()
+            .map(|item| {
+                let photos = photos_by_item.remove(&item.id).unwrap_or_default();
+                item_response(&state, item, photos)
+            })
+            .collect(),
+    ))
+}
+
+/// Modifier un objet (propriétaire uniquement).
+#[utoipa::path(
+    patch,
+    path = "/items/{id}",
+    tag = "catalog",
+    params(("id" = Uuid, Path, description = "Identifiant de l'objet")),
+    request_body = UpdateItemRequest,
+    responses(
+        (status = 200, description = "Objet mis à jour", body = ItemResponse),
+        (status = 400, description = "Champ ou transition invalide", body = crate::error::ErrorResponse),
+        (status = 404, description = "Objet introuvable", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn update_item(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<UpdateItemRequest>,
+) -> Result<Json<ItemResponse>, ApiError> {
+    let introuvable = || ApiError::not_found("Cet objet n'existe pas (ou plus).");
+    valider_champs_objet(
+        &body.title,
+        &body.description,
+        &body.condition,
+        body.value_cents,
+        &body.delivery_pref,
+    )?;
+    if !infra::catalog_repo::category_exists(&state.pool, body.category_id).await? {
+        return Err(ApiError::bad_request(
+            "categorie_inconnue",
+            "Choisis une catégorie pour que ton objet soit trouvable.",
+        ));
+    }
+    let existing = infra::catalog_repo::get_item(&state.pool, id)
+        .await?
+        .filter(|i| i.owner_id == user.user_id)
+        .ok_or_else(introuvable)?;
+    regles::transition_statut_autorisee(&existing.status, &body.status)
+        .map_err(map_catalog_error)?;
+
+    let exchange_wishes = body
+        .exchange_wishes
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.chars().take(300).collect::<String>());
+    let item = infra::catalog_repo::update_item(
+        &state.pool,
+        id,
+        user.user_id,
+        infra::catalog_repo::ItemUpdate {
+            title: body.title.trim(),
+            description: body.description.trim(),
+            category_id: body.category_id,
+            condition: &body.condition,
+            value_cents: body.value_cents,
+            delivery_pref: &body.delivery_pref,
+            exchange_wishes: exchange_wishes.as_deref(),
+            status: &body.status,
+        },
+    )
+    .await?
+    .ok_or_else(introuvable)?;
+
+    if item.status != existing.status {
+        let event = if item.status == "masque" {
+            "item_hidden"
+        } else {
+            "item_edited"
+        };
+        telemetry::track(
+            &state,
+            event,
+            Some(user.user_id),
+            json!({"item_id": item.id}),
+        )
+        .await;
+    }
+
+    let photos = infra::catalog_repo::photos_for_items(&state.pool, &[item.id]).await?;
+    Ok(Json(item_response(&state, item, photos)))
+}
+
+/// Remplace la liste ordonnée des photos (réordonnancement, ajout, retrait).
+#[utoipa::path(
+    put,
+    path = "/items/{id}/photos",
+    tag = "catalog",
+    params(("id" = Uuid, Path, description = "Identifiant de l'objet")),
+    request_body = ReplacePhotosRequest,
+    responses(
+        (status = 200, description = "Photos mises à jour", body = ItemResponse),
+        (status = 400, description = "Liste invalide", body = crate::error::ErrorResponse),
+        (status = 404, description = "Objet introuvable", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn replace_photos(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<ReplacePhotosRequest>,
+) -> Result<Json<ItemResponse>, ApiError> {
+    let introuvable = || ApiError::not_found("Cet objet n'existe pas (ou plus).");
+    regles::valider_nombre_photos(body.photos.len()).map_err(map_catalog_error)?;
+    let item = infra::catalog_repo::get_item(&state.pool, id)
+        .await?
+        .filter(|i| i.owner_id == user.user_id)
+        .ok_or_else(introuvable)?;
+
+    // Chaque id doit être soit une photo déjà rattachée, soit un upload frais.
+    let existing = infra::catalog_repo::photos_for_items(&state.pool, &[item.id]).await?;
+    let existing_by_id: HashMap<Uuid, &infra::catalog_repo::ItemPhoto> =
+        existing.iter().map(|p| (p.photo_id, p)).collect();
+    let fresh_ids: Vec<Uuid> = body
+        .photos
+        .iter()
+        .filter(|id| !existing_by_id.contains_key(id))
+        .copied()
+        .collect();
+    let fresh = resolve_uploads(&state, user.user_id, &fresh_ids).await?;
+    let fresh_by_id: HashMap<Uuid, &infra::catalog_repo::PhotoUpload> =
+        fresh.iter().map(|u| (u.photo_id, u)).collect();
+
+    let mut ordered = Vec::with_capacity(body.photos.len());
+    for photo_id in &body.photos {
+        if let Some(photo) = existing_by_id.get(photo_id) {
+            ordered.push((*photo_id, photo.s3_key.clone(), photo.content_type.clone()));
+        } else if let Some(upload) = fresh_by_id.get(photo_id) {
+            ordered.push((
+                *photo_id,
+                upload.s3_key.clone(),
+                upload.content_type.clone(),
+            ));
+        }
+    }
+
+    let removed = infra::catalog_repo::replace_item_photos(&state.pool, item.id, &ordered).await?;
+    for key in removed {
+        state.photos.delete_object(&key).await;
+    }
+
+    let photos = infra::catalog_repo::photos_for_items(&state.pool, &[item.id]).await?;
+    Ok(Json(item_response(&state, item, photos)))
+}
