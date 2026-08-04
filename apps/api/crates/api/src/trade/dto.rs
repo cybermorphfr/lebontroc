@@ -30,6 +30,21 @@ pub struct ProposalItemResponse {
 }
 
 #[derive(Serialize, ToSchema)]
+pub struct TradeResponse {
+    pub id: Uuid,
+    /// `accepte`, `finalise` ou `annule`.
+    pub status: String,
+    /// `main_propre` ou `envoi` — choisi à l'acceptation.
+    pub delivery_mode: String,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct AcceptProposalRequest {
+    /// `main_propre` ou `envoi`.
+    pub delivery_mode: String,
+}
+
+#[derive(Serialize, ToSchema)]
 pub struct ProposalResponse {
     pub id: Uuid,
     /// `envoyee`, `vue`, `acceptee`, `refusee`, `contre_proposee` ou `expiree`.
@@ -47,4 +62,10 @@ pub struct ProposalResponse {
     pub offered: Vec<ProposalItemResponse>,
     /// Ce que le proposant demande.
     pub requested: Vec<ProposalItemResponse>,
+    /// Proposition que celle-ci remplace (chaîne de contre-propositions).
+    pub counter_of: Option<Uuid>,
+    /// Contre-proposition qui a remplacé celle-ci, le cas échéant.
+    pub superseded_by: Option<Uuid>,
+    /// Le troc créé si la proposition a été acceptée.
+    pub trade: Option<TradeResponse>,
 }

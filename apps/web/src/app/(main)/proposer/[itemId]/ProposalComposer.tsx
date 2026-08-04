@@ -13,16 +13,21 @@ export function ProposalComposer({
   mine,
   theirs,
   recipientPseudo,
-  preselectedId,
+  preselectedRequested,
+  preselectedOffered = [],
+  counterOf,
 }: {
   mine: ItemResponse[];
   theirs: ItemResponse[];
   recipientPseudo: string;
-  preselectedId: string;
+  preselectedRequested: string[];
+  preselectedOffered?: string[];
+  /** Id de la proposition à remplacer (mode contre-proposition). */
+  counterOf?: string;
 }) {
   const router = useRouter();
-  const [offered, setOffered] = useState<Set<string>>(new Set());
-  const [requested, setRequested] = useState<Set<string>>(new Set([preselectedId]));
+  const [offered, setOffered] = useState<Set<string>>(new Set(preselectedOffered));
+  const [requested, setRequested] = useState<Set<string>>(new Set(preselectedRequested));
   const [cashDirection, setCashDirection] = useState("aucune");
   const [cashEuros, setCashEuros] = useState(0);
   const [message, setMessage] = useState("");
@@ -61,7 +66,8 @@ export function ProposalComposer({
     setSending(true);
     setError(null);
     try {
-      const response = await apiFetch("/proposals", {
+      const endpoint = counterOf ? `/proposals/${counterOf}/counter` : "/proposals";
+      const response = await apiFetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -191,7 +197,11 @@ export function ProposalComposer({
         disabled={!ready || sending}
         className="flex min-h-12 cursor-pointer items-center justify-center rounded-full bg-[#c67139] px-6 font-display text-base text-creme transition-colors hover:bg-terracotta-600 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {sending ? "Envoi…" : `Envoyer ma proposition à ${recipientPseudo}`}
+        {sending
+          ? "Envoi…"
+          : counterOf
+            ? `Envoyer ma contre-proposition à ${recipientPseudo}`
+            : `Envoyer ma proposition à ${recipientPseudo}`}
       </button>
     </div>
   );

@@ -1159,6 +1159,142 @@
         }
       }
     },
+    "/proposals/{id}/accept": {
+      "post": {
+        "tags": [
+          "trade"
+        ],
+        "summary": "Accepter une proposition — LA transaction critique : objets réservés,\nconcurrentes caduques, proposants évincés notifiés. Idempotente (une\nproposition ne crée qu'un troc) : le double clic renvoie le même troc.",
+        "operationId": "accept_proposal",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant de la proposition",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptProposalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Troc créé (ou déjà créé)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProposalResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Plus ouverte ou mode invalide",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Un objet vient d'être réservé ailleurs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/proposals/{id}/counter": {
+      "post": {
+        "tags": [
+          "trade"
+        ],
+        "summary": "Contre-proposer : la proposition ouverte est remplacée par une nouvelle\naux rôles inversés, chaînée par `counter_of` ; la conversation suit.",
+        "operationId": "counter_proposal",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Proposition à remplacer",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProposalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Contre-proposition envoyée",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProposalResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Composition invalide ou plus ouverte",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/proposals/{id}/messages": {
       "get": {
         "tags": [
@@ -1499,6 +1635,18 @@
   },
   "components": {
     "schemas": {
+      "AcceptProposalRequest": {
+        "type": "object",
+        "required": [
+          "delivery_mode"
+        ],
+        "properties": {
+          "delivery_mode": {
+            "type": "string",
+            "description": "`main_propre` ou `envoi`."
+          }
+        }
+      },
       "ApiStatus": {
         "type": "string",
         "enum": [
@@ -2172,6 +2320,14 @@
           "cash_direction": {
             "type": "string"
           },
+          "counter_of": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Proposition que celle-ci remplace (chaîne de contre-propositions)."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -2217,6 +2373,25 @@
           "status": {
             "type": "string",
             "description": "`envoyee`, `vue`, `acceptee`, `refusee`, `contre_proposee` ou `expiree`."
+          },
+          "superseded_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Contre-proposition qui a remplacé celle-ci, le cas échéant."
+          },
+          "trade": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TradeResponse",
+                "description": "Le troc créé si la proposition a été acceptée."
+              }
+            ]
           }
         }
       },
@@ -2400,6 +2575,28 @@
             ],
             "format": "int32",
             "description": "Position dans une liste de résultats (`search_result_clicked`)."
+          }
+        }
+      },
+      "TradeResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "delivery_mode"
+        ],
+        "properties": {
+          "delivery_mode": {
+            "type": "string",
+            "description": "`main_propre` ou `envoi` — choisi à l'acceptation."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "description": "`accepte`, `finalise` ou `annule`."
           }
         }
       },

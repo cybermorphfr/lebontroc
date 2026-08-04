@@ -902,6 +902,17 @@ pub async fn delete_item(
     user: CurrentUser,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
+    // Un objet réservé ou troqué fait partie d'un troc : intouchable (F3.3).
+    let existing = infra::catalog_repo::get_item(&state.pool, id)
+        .await?
+        .filter(|i| i.owner_id == user.user_id)
+        .ok_or_else(|| ApiError::not_found("Cet objet n'existe pas (ou plus)."))?;
+    if matches!(existing.status.as_str(), "reserve" | "troque") {
+        return Err(ApiError::bad_request(
+            "objet_reserve",
+            "Cet objet fait partie d'un troc en cours — il ne peut pas être supprimé.",
+        ));
+    }
     let Some(removed_keys) =
         infra::catalog_repo::soft_delete_item(&state.pool, id, user.user_id).await?
     else {

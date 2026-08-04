@@ -76,6 +76,24 @@ pub fn peut_refuser(statut: &str) -> Result<(), TradeError> {
     }
 }
 
+/// Le destinataire peut accepter une proposition encore ouverte.
+pub fn peut_accepter(statut: &str) -> Result<(), TradeError> {
+    peut_refuser(statut)
+}
+
+/// Le destinataire peut contre-proposer sur une proposition encore ouverte.
+pub fn peut_contre_proposer(statut: &str) -> Result<(), TradeError> {
+    peut_refuser(statut)
+}
+
+/// Modes de remise possibles d'un troc (choisis à l'acceptation).
+pub fn valider_mode_remise(mode: &str) -> Result<(), TradeError> {
+    match mode {
+        "main_propre" | "envoi" => Ok(()),
+        _ => Err(TradeError::TransitionInterdite),
+    }
+}
+
 /// Une proposition passe à `vue` uniquement depuis `envoyee`.
 pub fn peut_marquer_vue(statut: &str) -> bool {
     statut == "envoyee"
@@ -142,6 +160,27 @@ mod tests {
             valider_proposition(&onze, &[100], 0, "aucune"),
             Err(TradeError::TropDObjets)
         );
+    }
+
+    #[test]
+    fn acceptation_et_contre_sur_proposition_ouverte_seulement() {
+        for statut in ["envoyee", "vue"] {
+            assert!(peut_accepter(statut).is_ok());
+            assert!(peut_contre_proposer(statut).is_ok());
+        }
+        for statut in [
+            "acceptee",
+            "refusee",
+            "expiree",
+            "contre_proposee",
+            "caduque",
+        ] {
+            assert!(peut_accepter(statut).is_err(), "accepter {statut}");
+            assert!(peut_contre_proposer(statut).is_err(), "contrer {statut}");
+        }
+        assert!(valider_mode_remise("main_propre").is_ok());
+        assert!(valider_mode_remise("envoi").is_ok());
+        assert!(valider_mode_remise("teleportation").is_err());
     }
 
     #[test]

@@ -77,7 +77,7 @@ export default async function ProposerPage({
         mine={mine}
         theirs={theirs}
         recipientPseudo={detail.owner.pseudo}
-        preselectedId={detail.item.id}
+        preselectedRequested={[detail.item.id]}
       />
     </main>
   );

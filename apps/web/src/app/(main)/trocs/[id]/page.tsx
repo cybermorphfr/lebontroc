@@ -8,6 +8,7 @@ import { Tag } from "@/components/ui/Tag";
 import { getCurrentUser } from "@/lib/server-api";
 import { STATUS_PROPOSITION } from "@/lib/format";
 
+import { AcceptButton } from "./AcceptButton";
 import { Conversation } from "./Conversation";
 import { RefuseButton } from "./RefuseButton";
 
@@ -102,22 +103,43 @@ export default async function TrocDetailPage({
         </section>
       ) : null}
 
+      {proposal.status === "acceptee" ? (
+        <p className="mt-4 rounded-3xl bg-sauge-100 p-4 text-sm text-sauge-800">
+          🤝 Troc conclu{proposal.trade
+            ? proposal.trade.delivery_mode === "main_propre"
+              ? " — remise en main propre"
+              : " — par envoi"
+            : ""}
+          . Les objets sont réservés : convenez des détails dans la conversation.
+        </p>
+      ) : null}
+
+      {proposal.superseded_by ? (
+        <p className="mt-4 rounded-3xl bg-terracotta-100/60 p-4 text-sm text-terracotta-800">
+          Cette proposition a été remplacée par une contre-proposition.{" "}
+          <Link href={`/trocs/${proposal.superseded_by}`} className="font-semibold underline">
+            Voir la nouvelle proposition
+          </Link>
+        </p>
+      ) : null}
+      {proposal.counter_of ? (
+        <p className="mt-4 text-xs text-neutre-700">
+          Contre-proposition —{" "}
+          <Link href={`/trocs/${proposal.counter_of}`} className="underline">
+            voir la proposition précédente
+          </Link>
+        </p>
+      ) : null}
+
       {!proposal.is_proposer && ouverte ? (
         <div className="mt-4 flex flex-wrap items-center gap-2">
-          <button
-            disabled
-            title="L'acceptation arrive très bientôt (on verrouille tout ça proprement)."
-            className="flex min-h-11 cursor-not-allowed items-center justify-center rounded-full bg-neutre-300 px-6 font-display text-sm text-neutre-700"
-          >
-            Accepter
-          </button>
-          <button
-            disabled
-            title="La contre-proposition arrive très bientôt."
-            className="flex min-h-11 cursor-not-allowed items-center justify-center rounded-full border border-neutre-300 px-6 text-sm text-neutre-700"
+          <AcceptButton proposalId={proposal.id} />
+          <Link
+            href={`/trocs/${proposal.id}/contre`}
+            className="flex min-h-11 items-center justify-center rounded-full border border-neutre-300 px-6 text-sm text-encre transition-colors hover:bg-encre/7"
           >
             Contre-proposer
-          </button>
+          </Link>
           <RefuseButton proposalId={proposal.id} />
         </div>
       ) : null}

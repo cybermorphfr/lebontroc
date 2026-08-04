@@ -37,4 +37,5 @@ export const STATUS_PROPOSITION: Record<
   refusee: { label: "Refusée", variant: "neutral" },
   contre_proposee: { label: "Contre-proposée", variant: "accent" },
   expiree: { label: "Expirée", variant: "neutral" },
+  caduque: { label: "Caduque", variant: "neutral" },
 };

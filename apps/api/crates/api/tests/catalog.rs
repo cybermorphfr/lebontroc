@@ -1611,3 +1611,266 @@ async fn relance_apres_24_heures_sans_lecture(pool: PgPool) {
     }
     assert_eq!(api::messaging::handlers::remind_unread(&state).await, 0);
 }
+
+// ————— Acceptation atomique et contre-proposition (F3.3) —————
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn acceptation_reserve_invalide_les_concurrentes_et_notifie(pool: PgPool) {
+    let (app, emails) = app(pool.clone());
+    let alice = verified_user_at(&app, &emails, "t1@exemple.fr", "talice1", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo convoité", 15_000).await;
+    let bob = verified_user(&app, &emails, "t2@exemple.fr", "tbob1").await;
+    let jeu = publish_valued(&app, &bob, "Jeu de Bob", 4_000).await;
+    let carole = verified_user_at(&app, &emails, "t3@exemple.fr", "tcarole1", "44300").await;
+    let puzzle = publish_valued(&app, &carole, "Puzzle de Carole", 3_000).await;
+
+    // Bob et Carole visent tous deux le vélo d'Alice.
+    let p_bob = simple_proposal(&app, &bob, &jeu, &velo).await;
+    let p_carole = simple_proposal(&app, &carole, &puzzle, &velo).await;
+
+    // Alice accepte la proposition de Bob (main propre).
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/proposals/{p_bob}/accept"),
+            Some(serde_json::json!({"delivery_mode": "main_propre"})),
+            Some(&alice),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = body_json(response).await;
+    assert_eq!(json["status"], "acceptee");
+    assert_eq!(json["trade"]["delivery_mode"], "main_propre");
+
+    // Gherkin : tous les objets concernés passent en « réservé ».
+    let statuses: Vec<(String,)> =
+        sqlx::query_as("SELECT status FROM items WHERE id IN ($1::uuid, $2::uuid)")
+            .bind(&velo)
+            .bind(&jeu)
+            .fetch_all(&pool)
+            .await
+            .expect("statuts");
+    assert!(statuses.iter().all(|(s,)| s == "reserve"));
+
+    // Gherkin : la proposition de Carole devient caduque, Carole est notifiée.
+    let json = body_json(
+        call(
+            &app,
+            request(
+                "GET",
+                &format!("/proposals/{p_carole}"),
+                None,
+                Some(&carole),
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(json["status"], "caduque");
+    {
+        let emails = emails.lock().expect("verrou");
+        let dernier = emails.last().expect("e-mail");
+        assert_eq!(dernier.to, "t3@exemple.fr");
+        assert!(dernier.subject.contains("réservé"));
+    }
+
+    // Un objet réservé ne peut plus être supprimé ni proposé.
+    let response = call(
+        &app,
+        request("DELETE", &format!("/items/{velo}"), None, Some(&alice)),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body_json(response).await["error"]["code"], "objet_reserve");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn course_entre_deux_acceptations_une_seule_gagne(pool: PgPool) {
+    let (app, emails) = app(pool.clone());
+    // Alice possède le vélo ; Bob et Carole le veulent chacun de leur côté.
+    let alice = verified_user_at(&app, &emails, "t4@exemple.fr", "talice2", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo unique", 15_000).await;
+    let bob = verified_user(&app, &emails, "t5@exemple.fr", "tbob2").await;
+    let jeu = publish_valued(&app, &bob, "Jeu unique", 4_000).await;
+    let carole = verified_user_at(&app, &emails, "t6@exemple.fr", "tcarole2", "44300").await;
+    let puzzle = publish_valued(&app, &carole, "Puzzle unique", 3_000).await;
+
+    let p_bob = simple_proposal(&app, &bob, &jeu, &velo).await;
+    let p_carole = simple_proposal(&app, &carole, &puzzle, &velo).await;
+
+    // Gherkin : les deux acceptations partent au même instant — exactement
+    // une aboutit, l'autre échoue proprement (409, message clair).
+    let accept = |p: String| {
+        let app = app.clone();
+        let alice = alice.clone();
+        async move {
+            call(
+                &app,
+                request(
+                    "POST",
+                    &format!("/proposals/{p}/accept"),
+                    Some(serde_json::json!({"delivery_mode": "main_propre"})),
+                    Some(&alice),
+                ),
+            )
+            .await
+            .status()
+        }
+    };
+    let (s1, s2) = tokio::join!(accept(p_bob.clone()), accept(p_carole.clone()));
+    let statuts = [s1, s2];
+    assert_eq!(
+        statuts.iter().filter(|s| **s == StatusCode::OK).count(),
+        1,
+        "exactement une acceptation doit réussir : {statuts:?}"
+    );
+    assert_eq!(
+        statuts
+            .iter()
+            .filter(|s| **s == StatusCode::CONFLICT)
+            .count(),
+        1,
+        "l'autre doit échouer en 409 : {statuts:?}"
+    );
+
+    // Le vélo n'est réservé qu'une fois, un seul troc existe.
+    let (count,): (i64,) = sqlx::query_as("SELECT count(*) FROM trades")
+        .fetch_one(&pool)
+        .await
+        .expect("trades");
+    assert_eq!(count, 1);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn acceptation_idempotente_au_double_clic(pool: PgPool) {
+    let (app, emails) = app(pool);
+    let alice = verified_user_at(&app, &emails, "t7@exemple.fr", "talice3", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo cliqué", 15_000).await;
+    let bob = verified_user(&app, &emails, "t8@exemple.fr", "tbob3").await;
+    let jeu = publish_valued(&app, &bob, "Jeu cliqué", 4_000).await;
+    let id = simple_proposal(&app, &bob, &jeu, &velo).await;
+
+    let mut trade_ids = Vec::new();
+    for _ in 0..2 {
+        let response = call(
+            &app,
+            request(
+                "POST",
+                &format!("/proposals/{id}/accept"),
+                Some(serde_json::json!({"delivery_mode": "envoi"})),
+                Some(&alice),
+            ),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = body_json(response).await;
+        trade_ids.push(json["trade"]["id"].as_str().expect("trade id").to_string());
+    }
+    assert_eq!(trade_ids[0], trade_ids[1], "le même troc est renvoyé");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn contre_proposition_remplace_et_garde_la_conversation(pool: PgPool) {
+    let (app, emails) = app(pool);
+    let alice = verified_user_at(&app, &emails, "t9@exemple.fr", "talice4", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo négocié", 15_000).await;
+    let bob = verified_user(&app, &emails, "t10@exemple.fr", "tbob4").await;
+    let jeu = publish_valued(&app, &bob, "Jeu négocié", 4_000).await;
+    let old_id = simple_proposal(&app, &bob, &jeu, &velo).await;
+
+    // Un échange a lieu dans la conversation d'origine.
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/proposals/{old_id}/messages"),
+            Some(serde_json::json!({"body": "Intéressée, mais j'aimerais une soulte."})),
+            Some(&alice),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    // Alice contre-propose : mêmes objets, 20 € à la charge de Bob.
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/proposals/{old_id}/counter"),
+            Some(serde_json::json!({
+                "offered_item_ids": [velo],
+                "requested_item_ids": [jeu],
+                "cash_cents": 2000,
+                "cash_direction": "du_destinataire"
+            })),
+            Some(&alice),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let json = body_json(response).await;
+    let new_id = json["id"].as_str().expect("id").to_string();
+    assert_eq!(json["counter_of"], old_id.as_str());
+    assert_eq!(json["proposer_pseudo"], "talice4");
+    assert_eq!(json["recipient_pseudo"], "tbob4");
+
+    // L'ancienne est « contre_proposee », chaînée vers la nouvelle, et ne
+    // peut plus être ni refusée ni acceptée.
+    let json = body_json(
+        call(
+            &app,
+            request("GET", &format!("/proposals/{old_id}"), None, Some(&bob)),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(json["status"], "contre_proposee");
+    assert_eq!(json["superseded_by"], new_id.as_str());
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/proposals/{old_id}/accept"),
+            Some(serde_json::json!({"delivery_mode": "envoi"})),
+            Some(&bob),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    // La conversation a suivi la contre-proposition.
+    let json = body_json(
+        call(
+            &app,
+            request(
+                "GET",
+                &format!("/proposals/{new_id}/messages"),
+                None,
+                Some(&bob),
+            ),
+        )
+        .await,
+    )
+    .await;
+    let fils = json.as_array().expect("messages");
+    assert_eq!(fils.len(), 1);
+    assert!(fils[0]["body"].as_str().expect("body").contains("soulte"));
+
+    // Bob accepte la contre-proposition : le troc porte bien la soulte.
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/proposals/{new_id}/accept"),
+            Some(serde_json::json!({"delivery_mode": "main_propre"})),
+            Some(&bob),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = body_json(response).await;
+    assert_eq!(json["status"], "acceptee");
+    assert_eq!(json["cash_cents"], 2000);
+}

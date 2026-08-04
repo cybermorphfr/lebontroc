@@ -152,6 +152,34 @@ impl EmailSender {
         self.send(to, &subject, text, html).await
     }
 
+    /// Prévient un proposant que sa proposition est caduque : un des objets
+    /// vient d'être réservé dans un autre troc (F3.3).
+    pub async fn send_proposal_invalidated(&self, to: &str, pseudo: &str) -> anyhow::Result<()> {
+        let subject = "Un objet de ta proposition vient d'être réservé";
+        let text = format!(
+            "Salut {pseudo},\n\n\
+             Un des objets de ta proposition de troc vient d'être réservé dans un \
+             autre échange : ta proposition n'est plus valable.\n\n\
+             Le fil regorge d'autres trouvailles — retente ta chance !\n\
+             https://lebontroc.brianplus.com\n\n\
+             À très vite,\nL'équipe Lebontroc\n"
+        );
+        let html = format!(
+            r#"<div style="font-family:Figtree,system-ui,sans-serif;background:#f5ead8;color:#201e1d;padding:32px">
+  <div style="max-width:480px;margin:0 auto;background:#ebddc5;border-radius:32px;padding:32px">
+    <p style="font-size:24px;margin:0 0 16px">Lebontroc</p>
+    <p>Salut {pseudo},</p>
+    <p>Un des objets de ta proposition de troc vient d'être réservé dans un autre échange&nbsp;: ta proposition n'est plus valable.</p>
+    <p style="text-align:center;margin:24px 0">
+      <a href="https://lebontroc.brianplus.com" style="background:#c67139;color:#f5ead8;text-decoration:none;padding:12px 28px;border-radius:999px;display:inline-block">Explorer le fil</a>
+    </p>
+    <p>À très vite,<br/>L'équipe Lebontroc</p>
+  </div>
+</div>"#
+        );
+        self.send(to, subject, text, html).await
+    }
+
     /// E-mail de vérification d'adresse (copy validée produit).
     pub async fn send_verification(
         &self,

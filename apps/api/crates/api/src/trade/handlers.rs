@@ -14,7 +14,10 @@ use uuid::Uuid;
 use crate::error::ApiError;
 use crate::extract::CurrentUser;
 use crate::telemetry;
-use crate::trade::dto::{CreateProposalRequest, ProposalItemResponse, ProposalResponse};
+use crate::trade::dto::{
+    AcceptProposalRequest, CreateProposalRequest, ProposalItemResponse, ProposalResponse,
+    TradeResponse,
+};
 use crate::AppState;
 
 fn map_trade_error(error: regles::TradeError) -> ApiError {
@@ -58,6 +61,16 @@ pub(crate) async fn proposal_responses(
             .or_default()
             .push(item);
     }
+    let mut trades_by_proposal: HashMap<Uuid, infra::trade_repo::Trade> =
+        infra::trade_repo::trades_for_proposals(&state.pool, &ids)
+            .await?
+            .into_iter()
+            .map(|t| (t.proposal_id, t))
+            .collect();
+    let superseded: HashMap<Uuid, Uuid> = infra::trade_repo::superseded_by(&state.pool, &ids)
+        .await?
+        .into_iter()
+        .collect();
 
     Ok(proposals
         .into_iter()
@@ -89,6 +102,15 @@ pub(crate) async fn proposal_responses(
                 expires_at: proposal.expires_at,
                 offered: to_response(offered),
                 requested: to_response(requested),
+                counter_of: proposal.counter_of,
+                superseded_by: superseded.get(&proposal.id).copied(),
+                trade: trades_by_proposal
+                    .remove(&proposal.id)
+                    .map(|t| TradeResponse {
+                        id: t.id,
+                        status: t.status,
+                        delivery_mode: t.delivery_mode,
+                    }),
             }
         })
         .collect())
@@ -307,6 +329,13 @@ pub async fn refuse_proposal(
         .ok_or_else(|| ApiError::not_found("Cette proposition n'existe pas."))?;
     regles::peut_refuser(&proposal.status).map_err(map_trade_error)?;
     infra::trade_repo::refuse_proposal(&state.pool, id, user.user_id).await?;
+    telemetry::track(
+        &state,
+        "proposal_declined",
+        Some(user.user_id),
+        json!({"proposal_id": id}),
+    )
+    .await;
     Ok(Json(proposal_response(&state, id, user.user_id).await?))
 }
 
@@ -342,4 +371,200 @@ pub async fn expire_and_notify(state: &AppState) -> usize {
         .await;
     }
     count
+}
+
+/// Accepter une proposition — LA transaction critique : objets réservés,
+/// concurrentes caduques, proposants évincés notifiés. Idempotente (une
+/// proposition ne crée qu'un troc) : le double clic renvoie le même troc.
+#[utoipa::path(
+    post,
+    path = "/proposals/{id}/accept",
+    tag = "trade",
+    params(("id" = Uuid, Path, description = "Identifiant de la proposition")),
+    request_body = AcceptProposalRequest,
+    responses(
+        (status = 200, description = "Troc créé (ou déjà créé)", body = ProposalResponse),
+        (status = 400, description = "Plus ouverte ou mode invalide", body = crate::error::ErrorResponse),
+        (status = 404, description = "Introuvable", body = crate::error::ErrorResponse),
+        (status = 409, description = "Un objet vient d'être réservé ailleurs", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn accept_proposal(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<AcceptProposalRequest>,
+) -> Result<Json<ProposalResponse>, ApiError> {
+    regles::valider_mode_remise(&body.delivery_mode)
+        .map_err(|_| ApiError::bad_request("remise_inconnue", "Choisis main propre ou envoi."))?;
+
+    let outcome =
+        infra::trade_repo::accept_proposal(&state.pool, id, user.user_id, &body.delivery_mode)
+            .await?;
+    let trade = match outcome {
+        infra::trade_repo::AcceptOutcome::NotFound => {
+            return Err(ApiError::not_found("Cette proposition n'existe pas."))
+        }
+        infra::trade_repo::AcceptOutcome::NotOpen(_) => {
+            return Err(map_trade_error(regles::TradeError::TransitionInterdite))
+        }
+        infra::trade_repo::AcceptOutcome::ItemsUnavailable => {
+            return Err(ApiError::conflict(
+                "objet_deja_reserve",
+                "Trop tard : un des objets vient d'être réservé dans un autre troc. \
+                 La proposition n'est plus valable.",
+            ))
+        }
+        infra::trade_repo::AcceptOutcome::AlreadyAccepted(trade) => trade,
+        infra::trade_repo::AcceptOutcome::Accepted(trade, evictions) => {
+            telemetry::track(
+                &state,
+                "proposal_accepted",
+                Some(user.user_id),
+                json!({"proposal_id": id}),
+            )
+            .await;
+            telemetry::track(
+                &state,
+                "trade_created",
+                Some(user.user_id),
+                json!({
+                    "trade_id": trade.id,
+                    "delivery_mode": trade.delivery_mode,
+                    "has_cash": trade.cash_cents > 0,
+                }),
+            )
+            .await;
+            for eviction in evictions {
+                if let Err(error) = state
+                    .mailer
+                    .send_proposal_invalidated(&eviction.proposer_email, &eviction.proposer_pseudo)
+                    .await
+                {
+                    tracing::error!(%error, proposal_id = %eviction.proposal_id,
+                        "e-mail d'éviction en échec");
+                }
+                telemetry::track(
+                    &state,
+                    "proposal_invalidated",
+                    None,
+                    json!({"proposal_id": eviction.proposal_id}),
+                )
+                .await;
+            }
+            trade
+        }
+    };
+    tracing::info!(trade_id = %trade.id, proposal_id = %id, "troc accepté");
+    Ok(Json(proposal_response(&state, id, user.user_id).await?))
+}
+
+/// Contre-proposer : la proposition ouverte est remplacée par une nouvelle
+/// aux rôles inversés, chaînée par `counter_of` ; la conversation suit.
+#[utoipa::path(
+    post,
+    path = "/proposals/{id}/counter",
+    tag = "trade",
+    params(("id" = Uuid, Path, description = "Proposition à remplacer")),
+    request_body = CreateProposalRequest,
+    responses(
+        (status = 201, description = "Contre-proposition envoyée", body = ProposalResponse),
+        (status = 400, description = "Composition invalide ou plus ouverte", body = crate::error::ErrorResponse),
+        (status = 404, description = "Introuvable", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn counter_proposal(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<CreateProposalRequest>,
+) -> Result<(StatusCode, Json<ProposalResponse>), ApiError> {
+    let old = infra::trade_repo::get_proposal(&state.pool, id)
+        .await?
+        .filter(|p| p.recipient_id == user.user_id)
+        .ok_or_else(|| ApiError::not_found("Cette proposition n'existe pas."))?;
+    regles::peut_contre_proposer(&old.status).map_err(map_trade_error)?;
+
+    let indisponible = || {
+        ApiError::bad_request(
+            "objet_indisponible",
+            "Un des objets n'est plus disponible — recharge la page.",
+        )
+    };
+    // Je contre-propose : mes objets contre ceux du proposant initial.
+    let offered = infra::catalog_repo::items_by_ids(&state.pool, &body.offered_item_ids).await?;
+    if offered.len() != body.offered_item_ids.len()
+        || offered
+            .iter()
+            .any(|i| i.owner_id != user.user_id || i.status != "disponible")
+    {
+        return Err(indisponible());
+    }
+    let requested =
+        infra::catalog_repo::items_by_ids(&state.pool, &body.requested_item_ids).await?;
+    if requested.len() != body.requested_item_ids.len()
+        || requested
+            .iter()
+            .any(|i| i.owner_id != old.proposer_id || i.status != "disponible")
+    {
+        return Err(indisponible());
+    }
+
+    let cash_direction = body.cash_direction.as_deref().unwrap_or("aucune");
+    let offered_values: Vec<i32> = offered.iter().map(|i| i.value_cents).collect();
+    let requested_values: Vec<i32> = requested.iter().map(|i| i.value_cents).collect();
+    regles::valider_proposition(
+        &offered_values,
+        &requested_values,
+        body.cash_cents,
+        cash_direction,
+    )
+    .map_err(map_trade_error)?;
+
+    let message = body
+        .message
+        .as_deref()
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        .map(|m| m.chars().take(500).collect::<String>());
+    let mut items: Vec<(Uuid, &str, i32)> = Vec::new();
+    for item in &offered {
+        items.push((item.id, "offert", item.value_cents));
+    }
+    for item in &requested {
+        items.push((item.id, "demande", item.value_cents));
+    }
+    let expires_at = chrono::Utc::now() + Duration::days(regles::EXPIRATION_JOURS);
+    let Some(new_id) = infra::trade_repo::counter_proposal(
+        &state.pool,
+        id,
+        user.user_id,
+        old.proposer_id,
+        body.cash_cents,
+        cash_direction,
+        message.as_deref(),
+        expires_at,
+        &items,
+    )
+    .await?
+    else {
+        return Err(map_trade_error(regles::TradeError::TransitionInterdite));
+    };
+
+    telemetry::track(
+        &state,
+        "proposal_countered",
+        Some(user.user_id),
+        json!({
+            "old_proposal_id": id,
+            "proposal_id": new_id,
+            "items_offered_count": offered.len(),
+            "items_requested_count": requested.len(),
+            "cash_amount": body.cash_cents,
+        }),
+    )
+    .await;
+
+    let response = proposal_response(&state, new_id, user.user_id).await?;
+    Ok((StatusCode::CREATED, Json(response)))
 }
