@@ -128,7 +128,11 @@ jobs:
         # contrairement aux logs bruts du job.
         run: |
           docker compose -f docker-compose.ci.yml logs
-          LOGS=$(docker compose -f docker-compose.ci.yml ps -a 2>&1; echo; docker compose -f docker-compose.ci.yml logs --tail 40 2>&1)
+          API_LOGS=$(docker compose -f docker-compose.ci.yml logs --no-log-prefix api 2>&1 | tail -30; echo '--- inspect:'; docker inspect --format '{{json .State}}' $(docker compose -f docker-compose.ci.yml ps -aq api) 2>&1)
+          API_LOGS="${API_LOGS//'%'/'%25'}"
+          API_LOGS="${API_LOGS//$'\n'/'%0A'}"
+          echo "::error title=api-logs::${API_LOGS}"
+          LOGS=$(docker compose -f docker-compose.ci.yml ps -a 2>&1; echo; docker compose -f docker-compose.ci.yml logs --tail 25 web proxy db minio 2>&1)
           LOGS="${LOGS//'%'/'%25'}"
           LOGS="${LOGS//$'\n'/'%0A'}"
           echo "::error title=stack-e2e::${LOGS}"
