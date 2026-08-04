@@ -1046,3 +1046,320 @@ async fn liste_denvies_enregistree_et_bornee(pool: PgPool) {
     .await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
+
+// ————— Propositions de troc (F3.1) —————
+
+/// Publie un objet avec un titre et une valeur choisis, retourne son id.
+async fn publish_valued(app: &Router, cookies: &str, title: &str, value_cents: i32) -> String {
+    let photos = presign(app, cookies, 1).await;
+    let mut body = item_body(&photos);
+    body["title"] = serde_json::Value::String(title.to_string());
+    body["value_cents"] = serde_json::json!(value_cents);
+    let response = call(app, request("POST", "/items", Some(body), Some(cookies))).await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    body_json(response).await["id"]
+        .as_str()
+        .expect("id")
+        .to_string()
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn proposition_multi_objets_avec_soulte(pool: PgPool) {
+    let (app, emails) = app(pool);
+    // Gherkin F3.1 : ma console 120 € + 30 € contre son vélo 150 €.
+    let alice = verified_user_at(&app, &emails, "alice@exemple.fr", "alicetroc", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo de ville", 15_000).await;
+    let bob = verified_user(&app, &emails, "bob@exemple.fr", "bobtroc").await;
+    let console = publish_valued(&app, &bob, "Console rétro", 12_000).await;
+
+    let response = call(
+        &app,
+        request(
+            "POST",
+            "/proposals",
+            Some(serde_json::json!({
+                "offered_item_ids": [console],
+                "requested_item_ids": [velo],
+                "cash_cents": 3000,
+                "cash_direction": "du_proposant",
+                "message": "Ma console contre ton vélo ?"
+            })),
+            Some(&bob),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let json = body_json(response).await;
+    assert_eq!(json["status"], "envoyee");
+    assert_eq!(json["cash_cents"], 3000);
+    assert_eq!(json["cash_direction"], "du_proposant");
+    assert_eq!(json["offered"][0]["title"], "Console rétro");
+    assert_eq!(json["requested"][0]["title"], "Vélo de ville");
+    assert_eq!(json["recipient_pseudo"], "alicetroc");
+
+    // Boîtes : reçue chez Alice, envoyée chez Bob.
+    let recues =
+        body_json(call(&app, request("GET", "/me/proposals", None, Some(&alice))).await).await;
+    assert_eq!(recues.as_array().expect("liste").len(), 1);
+    assert_eq!(recues[0]["is_proposer"], false);
+    let envoyees = body_json(
+        call(
+            &app,
+            request("GET", "/me/proposals?box=envoyees", None, Some(&bob)),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(envoyees.as_array().expect("liste").len(), 1);
+    assert_eq!(envoyees[0]["is_proposer"], true);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn plafond_de_soulte_50_pour_cent(pool: PgPool) {
+    let (app, emails) = app(pool);
+    // Gherkin : meilleur objet 100 € → plafond 50 €.
+    let alice = verified_user_at(&app, &emails, "a2@exemple.fr", "alice2", "44300").await;
+    let cible = publish_valued(&app, &alice, "Meilleur objet", 10_000).await;
+    let bob = verified_user(&app, &emails, "b2@exemple.fr", "bob2").await;
+    let mien = publish_valued(&app, &bob, "Mon objet", 8_000).await;
+
+    let proposition = |cash: i32| {
+        serde_json::json!({
+            "offered_item_ids": [mien],
+            "requested_item_ids": [cible],
+            "cash_cents": cash,
+            "cash_direction": "du_proposant"
+        })
+    };
+    let response = call(
+        &app,
+        request("POST", "/proposals", Some(proposition(6_000)), Some(&bob)),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let json = body_json(response).await;
+    assert_eq!(json["error"]["code"], "soulte_trop_haute");
+    assert!(json["error"]["message"]
+        .as_str()
+        .expect("message")
+        .contains("50 €"));
+
+    // Pile au plafond : accepté.
+    let response = call(
+        &app,
+        request("POST", "/proposals", Some(proposition(5_000)), Some(&bob)),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn vue_puis_refus_par_le_destinataire(pool: PgPool) {
+    let (app, emails) = app(pool);
+    let alice = verified_user_at(&app, &emails, "a3@exemple.fr", "alice3", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo pliable", 15_000).await;
+    let bob = verified_user(&app, &emails, "b3@exemple.fr", "bob3").await;
+    let jeu = publish_valued(&app, &bob, "Jeu de société", 4_000).await;
+
+    let response = call(
+        &app,
+        request(
+            "POST",
+            "/proposals",
+            Some(serde_json::json!({
+                "offered_item_ids": [jeu], "requested_item_ids": [velo], "cash_cents": 0
+            })),
+            Some(&bob),
+        ),
+    )
+    .await;
+    let id = body_json(response).await["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+
+    // Un tiers ne voit rien.
+    let carole = verified_user(&app, &emails, "c3@exemple.fr", "carole3").await;
+    let response = call(
+        &app,
+        request("GET", &format!("/proposals/{id}"), None, Some(&carole)),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    // Le proposant consulte : toujours « envoyée ».
+    let json = body_json(
+        call(
+            &app,
+            request("GET", &format!("/proposals/{id}"), None, Some(&bob)),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(json["status"], "envoyee");
+
+    // Première ouverture par la destinataire : passe à « vue ».
+    let json = body_json(
+        call(
+            &app,
+            request("GET", &format!("/proposals/{id}"), None, Some(&alice)),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(json["status"], "vue");
+
+    // Le proposant ne peut pas refuser ; la destinataire oui, une seule fois.
+    let response = call(
+        &app,
+        request("POST", &format!("/proposals/{id}/refuse"), None, Some(&bob)),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = body_json(
+        call(
+            &app,
+            request(
+                "POST",
+                &format!("/proposals/{id}/refuse"),
+                None,
+                Some(&alice),
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(json["status"], "refusee");
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/proposals/{id}/refuse"),
+            None,
+            Some(&alice),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn compositions_interdites(pool: PgPool) {
+    let (app, emails) = app(pool);
+    let alice = verified_user_at(&app, &emails, "a4@exemple.fr", "alice4", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo cargo", 15_000).await;
+    let bob = verified_user(&app, &emails, "b4@exemple.fr", "bob4").await;
+    let jeu = publish_valued(&app, &bob, "Jeu d'échecs", 4_000).await;
+
+    // Troc avec soi-même.
+    let response = call(
+        &app,
+        request(
+            "POST",
+            "/proposals",
+            Some(serde_json::json!({
+                "offered_item_ids": [jeu], "requested_item_ids": [jeu], "cash_cents": 0
+            })),
+            Some(&bob),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    // Offrir un objet qui n'est pas à moi (Bob offre le vélo d'Alice).
+    let response = call(
+        &app,
+        request(
+            "POST",
+            "/proposals",
+            Some(serde_json::json!({
+                "offered_item_ids": [velo], "requested_item_ids": [jeu], "cash_cents": 0
+            })),
+            Some(&bob),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body_json(response).await["error"]["code"],
+        "objet_indisponible"
+    );
+
+    // Aucun objet offert.
+    let response = call(
+        &app,
+        request(
+            "POST",
+            "/proposals",
+            Some(serde_json::json!({
+                "offered_item_ids": [], "requested_item_ids": [velo], "cash_cents": 0
+            })),
+            Some(&bob),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body_json(response).await["error"]["code"],
+        "objets_manquants"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn expiration_notifie_le_proposant(pool: PgPool) {
+    let (state, emails) = api::AppState::for_tests(pool.clone());
+    let app = api::router(state.clone());
+
+    let alice = verified_user_at(&app, &emails, "a5@exemple.fr", "alice5", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo ancien", 15_000).await;
+    let bob = verified_user(&app, &emails, "b5@exemple.fr", "bob5").await;
+    let jeu = publish_valued(&app, &bob, "Jeu vidéo", 4_000).await;
+
+    let response = call(
+        &app,
+        request(
+            "POST",
+            "/proposals",
+            Some(serde_json::json!({
+                "offered_item_ids": [jeu], "requested_item_ids": [velo], "cash_cents": 0
+            })),
+            Some(&bob),
+        ),
+    )
+    .await;
+    let id = body_json(response).await["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+
+    // Sans retard, rien n'expire.
+    assert_eq!(api::trade::handlers::expire_and_notify(&state).await, 0);
+
+    // On antidate l'échéance : la proposition expire et Bob est prévenu.
+    sqlx::query("UPDATE proposals SET expires_at = now() - interval '1 hour'")
+        .execute(&pool)
+        .await
+        .expect("antidatage");
+    assert_eq!(api::trade::handlers::expire_and_notify(&state).await, 1);
+
+    let json = body_json(
+        call(
+            &app,
+            request("GET", &format!("/proposals/{id}"), None, Some(&bob)),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(json["status"], "expiree");
+
+    {
+        let emails = emails.lock().expect("verrou");
+        let dernier = emails.last().expect("e-mail");
+        assert_eq!(dernier.to, "b5@exemple.fr");
+        assert!(dernier.subject.contains("expiré"));
+        assert!(dernier.text.contains("alice5"));
+    }
+
+    // Une seconde passe n'expire rien de plus.
+    assert_eq!(api::trade::handlers::expire_and_notify(&state).await, 0);
+}

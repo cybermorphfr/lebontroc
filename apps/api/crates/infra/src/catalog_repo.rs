@@ -210,6 +210,14 @@ pub async fn create_item(
     Ok(item)
 }
 
+/// Objets non supprimés parmi les ids demandés (composition d'un troc).
+pub async fn items_by_ids(pool: &PgPool, ids: &[Uuid]) -> sqlx::Result<Vec<Item>> {
+    sqlx::query_as::<_, Item>("SELECT * FROM items WHERE id = ANY($1) AND deleted_at IS NULL")
+        .bind(ids)
+        .fetch_all(pool)
+        .await
+}
+
 pub async fn get_item(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<Item>> {
     sqlx::query_as::<_, Item>("SELECT * FROM items WHERE id = $1 AND deleted_at IS NULL")
         .bind(id)

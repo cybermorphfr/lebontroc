@@ -26,3 +26,15 @@ export function distanceLabel(km: number): string {
   if (km < 1) return "tout près";
   return `à ${Math.round(km)} km`;
 }
+
+export const STATUS_PROPOSITION: Record<
+  string,
+  { label: string; variant: "accent" | "accent-2" | "neutral" }
+> = {
+  envoyee: { label: "Envoyée", variant: "accent-2" },
+  vue: { label: "Vue", variant: "accent" },
+  acceptee: { label: "Acceptée", variant: "accent-2" },
+  refusee: { label: "Refusée", variant: "neutral" },
+  contre_proposee: { label: "Contre-proposée", variant: "accent" },
+  expiree: { label: "Expirée", variant: "neutral" },
+};

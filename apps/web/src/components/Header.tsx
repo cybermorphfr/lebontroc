@@ -12,6 +12,18 @@ export function Header({ user }: { user: UserResponse | null }) {
         <nav className="flex items-center gap-2">
           <SearchLink />
           <Link
+            href="/trocs"
+            aria-label="Mes trocs"
+            className="flex size-9 items-center justify-center rounded-full text-encre transition-colors hover:bg-encre/7"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="m17 3 4 4-4 4" />
+              <path d="M21 7H7" />
+              <path d="m7 21-4-4 4-4" />
+              <path d="M3 17h14" />
+            </svg>
+          </Link>
+          <Link
             href="/favoris"
             aria-label="Mes favoris"
             className="flex size-9 items-center justify-center rounded-full text-encre transition-colors hover:bg-encre/7"

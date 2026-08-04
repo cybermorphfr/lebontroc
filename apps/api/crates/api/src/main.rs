@@ -42,7 +42,9 @@ async fn main() -> anyhow::Result<()> {
     }
     spawn_orphan_purge(pool.clone(), photos.clone());
 
-    let app = api::router(AppState::new(pool, version, config, mailer, photos));
+    let state = AppState::new(pool, version, config, mailer, photos);
+    spawn_proposal_expiry(state.clone());
+    let app = api::router(state);
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;
     tracing::info!(port, "lebontroc-api démarrée");
@@ -92,6 +94,20 @@ fn photo_store_from_env() -> anyhow::Result<infra::s3::PhotoStore> {
 }
 
 /// Purge des uploads présignés jamais rattachés à un objet (> 24 h).
+/// Expire les propositions sans réponse depuis 7 jours (Gherkin F3.1) et
+/// notifie les proposants — toutes les heures.
+fn spawn_proposal_expiry(state: AppState) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+            let count = api::trade::handlers::expire_and_notify(&state).await;
+            if count > 0 {
+                tracing::info!(count, "propositions expirées");
+            }
+        }
+    });
+}
+
 fn spawn_orphan_purge(pool: sqlx::PgPool, photos: infra::s3::PhotoStore) {
     tokio::spawn(async move {
         loop {

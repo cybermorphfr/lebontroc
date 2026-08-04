@@ -91,6 +91,36 @@ impl EmailSender {
         }
     }
 
+    /// Prévient le proposant qu'une proposition a expiré sans réponse (F3.1).
+    pub async fn send_proposal_expired(
+        &self,
+        to: &str,
+        pseudo: &str,
+        recipient_pseudo: &str,
+    ) -> anyhow::Result<()> {
+        let subject = "Ta proposition de troc a expiré";
+        let text = format!(
+            "Salut {pseudo},\n\n\
+             Ta proposition de troc à {recipient_pseudo} est restée sans réponse \
+             pendant 7 jours : elle vient d'expirer.\n\n\
+             Pas de regret — les objets sont toujours là. Tu peux refaire une \
+             proposition quand tu veux, ou en tenter une autre ailleurs.\n\n\
+             À très vite,\nL'équipe Lebontroc\n"
+        );
+        let html = format!(
+            r#"<div style="font-family:Figtree,system-ui,sans-serif;background:#f5ead8;color:#201e1d;padding:32px">
+  <div style="max-width:480px;margin:0 auto;background:#ebddc5;border-radius:32px;padding:32px">
+    <p style="font-size:24px;margin:0 0 16px">Lebontroc</p>
+    <p>Salut {pseudo},</p>
+    <p>Ta proposition de troc à <strong>{recipient_pseudo}</strong> est restée sans réponse pendant 7&nbsp;jours&nbsp;: elle vient d'expirer.</p>
+    <p>Pas de regret — les objets sont toujours là. Tu peux refaire une proposition quand tu veux, ou en tenter une autre ailleurs.</p>
+    <p>À très vite,<br/>L'équipe Lebontroc</p>
+  </div>
+</div>"#
+        );
+        self.send(to, subject, text, html).await
+    }
+
     /// E-mail de vérification d'adresse (copy validée produit).
     pub async fn send_verification(
         &self,

@@ -470,12 +470,13 @@ pub async fn track_event(
     user: Option<CurrentUser>,
     Json(body): Json<TrackRequest>,
 ) -> Result<StatusCode, ApiError> {
-    const AUTORISES: [&str; 5] = [
+    const AUTORISES: [&str; 6] = [
         "signup_started",
         "item_publish_started",
         "item_publish_abandoned",
         "item_gallery_opened",
         "search_result_clicked",
+        "proposal_composer_opened",
     ];
     if !AUTORISES.contains(&body.name.as_str()) {
         return Err(ApiError::bad_request(

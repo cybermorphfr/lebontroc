@@ -166,22 +166,12 @@ export default async function ObjetPage({
               C&apos;est ton objet — le gérer depuis ton dressing
             </Link>
           ) : (
-            <div className="group relative">
-              <button
-                disabled
-                aria-describedby="troc-bientot"
-                className="inline-flex min-h-12 w-full cursor-not-allowed items-center justify-center rounded-full bg-neutre-300 px-6 font-display text-sm text-neutre-700"
-              >
-                Proposer un troc
-              </button>
-              <span
-                id="troc-bientot"
-                role="tooltip"
-                className="pointer-events-none absolute -top-10 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-encre px-4 py-1.5 text-xs text-creme opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
-              >
-                Les propositions de troc arrivent très bientôt !
-              </span>
-            </div>
+            <Link
+              href={viewer ? `/proposer/${item.id}` : "/connexion"}
+              className="inline-flex min-h-12 w-full items-center justify-center rounded-full bg-[#c67139] px-6 font-display text-sm text-creme transition-colors hover:bg-terracotta-600"
+            >
+              Proposer un troc
+            </Link>
           )}
         </div>
       </div>

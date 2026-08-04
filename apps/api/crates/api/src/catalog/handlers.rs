@@ -52,7 +52,7 @@ fn map_catalog_error(error: regles::CatalogError) -> ApiError {
 }
 
 /// L'utilisateur doit avoir vérifié son e-mail pour publier (Gherkin F1.1).
-async fn require_verified(state: &AppState, user: CurrentUser) -> Result<(), ApiError> {
+pub(crate) async fn require_verified(state: &AppState, user: CurrentUser) -> Result<(), ApiError> {
     let compte = infra::auth_repo::find_user_by_id(&state.pool, user.user_id)
         .await?
         .ok_or_else(|| ApiError::unauthorized("Connecte-toi pour continuer."))?;

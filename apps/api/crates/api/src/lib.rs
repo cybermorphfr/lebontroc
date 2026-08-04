@@ -9,6 +9,7 @@ pub mod extract;
 pub mod health;
 pub mod openapi;
 pub mod telemetry;
+pub mod trade;
 
 use std::sync::Arc;
 
@@ -111,6 +112,7 @@ pub fn router(state: AppState) -> Router {
         )
         .merge(auth::router())
         .merge(catalog::router())
+        .merge(trade::router())
         .with_state(state)
         .layer(
             ServiceBuilder::new()

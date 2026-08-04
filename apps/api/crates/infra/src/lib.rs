@@ -9,3 +9,4 @@ pub mod email;
 pub mod favorites_repo;
 pub mod s3;
 pub mod search;
+pub mod trade_repo;

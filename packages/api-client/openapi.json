@@ -940,6 +940,41 @@
         }
       }
     },
+    "/me/proposals": {
+      "get": {
+        "tags": [
+          "trade"
+        ],
+        "summary": "Mes propositions, reçues ou envoyées.",
+        "operationId": "my_proposals",
+        "parameters": [
+          {
+            "name": "box",
+            "in": "query",
+            "description": "recues (défaut) ou envoyees",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mes propositions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProposalResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/me/wishlist": {
       "get": {
         "tags": [
@@ -995,6 +1030,153 @@
           },
           "400": {
             "description": "Liste invalide",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/proposals": {
+      "post": {
+        "tags": [
+          "trade"
+        ],
+        "summary": "Envoyer une proposition « ça contre ça ».",
+        "operationId": "create_proposal",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProposalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Proposition envoyée",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProposalResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Composition invalide",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "E-mail non vérifié",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/proposals/{id}": {
+      "get": {
+        "tags": [
+          "trade"
+        ],
+        "summary": "Détail d'une proposition. La première ouverture par le destinataire la\npasse à `vue` (le proposant sait qu'elle a été regardée).",
+        "operationId": "get_proposal",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant de la proposition",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Proposition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProposalResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/proposals/{id}/refuse": {
+      "post": {
+        "tags": [
+          "trade"
+        ],
+        "summary": "Refuser une proposition (destinataire uniquement, proposition ouverte).",
+        "operationId": "refuse_proposal",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant de la proposition",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Proposition refusée",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProposalResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Plus ouverte",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Introuvable",
             "content": {
               "application/json": {
                 "schema": {
@@ -1278,6 +1460,50 @@
             "format": "int32",
             "description": "Valeur indicative en centimes (100 à 200 000).",
             "example": 15000
+          }
+        }
+      },
+      "CreateProposalRequest": {
+        "type": "object",
+        "required": [
+          "offered_item_ids",
+          "requested_item_ids"
+        ],
+        "properties": {
+          "cash_cents": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Soulte en centimes (0 = pas de soulte)."
+          },
+          "cash_direction": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`du_proposant` ou `du_destinataire` (obligatoire si soulte > 0)."
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Message d'accompagnement (500 caractères max)."
+          },
+          "offered_item_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Mes objets (1 à 10), tous disponibles."
+          },
+          "requested_item_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Ses objets (1 à 10), tous au même troqueur."
           }
         }
       },
@@ -1646,6 +1872,105 @@
           }
         }
       },
+      "ProposalItemResponse": {
+        "type": "object",
+        "required": [
+          "item_id",
+          "title",
+          "value_cents"
+        ],
+        "properties": {
+          "item_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "photo_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "value_cents": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Valeur figée au moment de la proposition."
+          }
+        }
+      },
+      "ProposalResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "proposer_pseudo",
+          "recipient_pseudo",
+          "is_proposer",
+          "cash_cents",
+          "cash_direction",
+          "created_at",
+          "expires_at",
+          "offered",
+          "requested"
+        ],
+        "properties": {
+          "cash_cents": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "cash_direction": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "is_proposer": {
+            "type": "boolean",
+            "description": "Le lecteur est-il le proposant (sinon : le destinataire) ?"
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "offered": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProposalItemResponse"
+            },
+            "description": "Ce que le proposant donne."
+          },
+          "proposer_pseudo": {
+            "type": "string"
+          },
+          "recipient_pseudo": {
+            "type": "string"
+          },
+          "requested": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProposalItemResponse"
+            },
+            "description": "Ce que le proposant demande."
+          },
+          "status": {
+            "type": "string",
+            "description": "`envoyee`, `vue`, `acceptee`, `refusee`, `contre_proposee` ou `expiree`."
+          }
+        }
+      },
       "PublicProfileResponse": {
         "type": "object",
         "required": [
@@ -1968,6 +2293,10 @@
     {
       "name": "catalog",
       "description": "Catégories, objets et photos"
+    },
+    {
+      "name": "trade",
+      "description": "Propositions de troc"
     }
   ]
 }
