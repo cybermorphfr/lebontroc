@@ -31,16 +31,18 @@ fn map_validation(error: regles::ValidationError) -> ApiError {
             "email_invalide",
             "Il nous faut un e-mail valide pour t'envoyer le lien de vérification.",
         ),
-        regles::ValidationError::MotDePasseTropCourt => {
-            ApiError::bad_request("mot_de_passe_trop_court", "Encore un effort : 8 caractères minimum.")
-        }
+        regles::ValidationError::MotDePasseTropCourt => ApiError::bad_request(
+            "mot_de_passe_trop_court",
+            "Encore un effort : 8 caractères minimum.",
+        ),
         regles::ValidationError::PseudoInvalide => ApiError::bad_request(
             "pseudo_invalide",
             "3 à 30 caractères, lettres, chiffres, tirets ou underscore.",
         ),
-        regles::ValidationError::CodePostalInvalide => {
-            ApiError::bad_request("code_postal_invalide", "Un code postal à 5 chiffres, comme 44000.")
-        }
+        regles::ValidationError::CodePostalInvalide => ApiError::bad_request(
+            "code_postal_invalide",
+            "Un code postal à 5 chiffres, comme 44000.",
+        ),
     }
 }
 
@@ -50,9 +52,10 @@ fn map_unique(violation: infra::auth_repo::UniqueViolation) -> ApiError {
             "email_pris",
             "Un compte existe déjà avec cet e-mail. Connecte-toi plutôt ?",
         ),
-        infra::auth_repo::UniqueViolation::PseudoPris => {
-            ApiError::conflict("pseudo_pris", "Ce pseudo est déjà pris. Tente une variante ?")
-        }
+        infra::auth_repo::UniqueViolation::PseudoPris => ApiError::conflict(
+            "pseudo_pris",
+            "Ce pseudo est déjà pris. Tente une variante ?",
+        ),
         infra::auth_repo::UniqueViolation::Autre(error) => ApiError::internal(error),
     }
 }
@@ -87,7 +90,12 @@ async fn open_session(
 }
 
 /// Émet un token de vérification et envoie l'e-mail.
-async fn send_verification_email(state: &AppState, user_id: Uuid, email: &str, pseudo: &str) -> Result<(), ApiError> {
+async fn send_verification_email(
+    state: &AppState,
+    user_id: Uuid,
+    email: &str,
+    pseudo: &str,
+) -> Result<(), ApiError> {
     let token = tokens::generate();
     infra::auth_repo::create_verification_token(
         &state.pool,
@@ -96,7 +104,10 @@ async fn send_verification_email(state: &AppState, user_id: Uuid, email: &str, p
         Utc::now() + Duration::hours(VERIFICATION_TTL_HOURS),
     )
     .await?;
-    let link = format!("{}/api/auth/verify-email?token={}", state.config.app_base_url, token.raw);
+    let link = format!(
+        "{}/api/auth/verify-email?token={}",
+        state.config.app_base_url, token.raw
+    );
     if let Err(error) = state.mailer.send_verification(email, pseudo, &link).await {
         // L'inscription ne doit pas échouer si le SMTP tousse : le renvoi existe.
         tracing::error!(%error, "envoi de l'e-mail de vérification en échec");
@@ -129,9 +140,10 @@ pub async fn signup(
 
     let hash = password::hash_password(body.password).await?;
     let email = body.email.trim().to_lowercase();
-    let user = infra::auth_repo::create_user(&state.pool, &email, &hash, &body.pseudo, &body.postal_code)
-        .await
-        .map_err(map_unique)?;
+    let user =
+        infra::auth_repo::create_user(&state.pool, &email, &hash, &body.pseudo, &body.postal_code)
+            .await
+            .map_err(map_unique)?;
 
     send_verification_email(&state, user.id, &user.email, &user.pseudo).await?;
     let jar = open_session(&state, jar, user.id, user_agent(&headers)).await?;
@@ -165,13 +177,25 @@ pub async fn login(
     else {
         // Timing constant : on vérifie quand même un hash factice.
         password::verify_dummy(body.password).await?;
-        telemetry::track(&state, "login_failed", None, json!({"reason": "unknown_email"})).await;
+        telemetry::track(
+            &state,
+            "login_failed",
+            None,
+            json!({"reason": "unknown_email"}),
+        )
+        .await;
         return Err(identifiants_invalides());
     };
 
     if let Some(locked_until) = user.locked_until {
         if locked_until > Utc::now() {
-            telemetry::track(&state, "login_failed", Some(user.id), json!({"reason": "locked"})).await;
+            telemetry::track(
+                &state,
+                "login_failed",
+                Some(user.id),
+                json!({"reason": "locked"}),
+            )
+            .await;
             return Err(ApiError::too_many(
                 "compte_verrouille",
                 "Trop de tentatives. Réessaie dans 15 minutes.",
@@ -186,7 +210,13 @@ pub async fn login(
             None
         };
         infra::auth_repo::record_login_failure(&state.pool, user.id, lock).await?;
-        telemetry::track(&state, "login_failed", Some(user.id), json!({"reason": "bad_password"})).await;
+        telemetry::track(
+            &state,
+            "login_failed",
+            Some(user.id),
+            json!({"reason": "bad_password"}),
+        )
+        .await;
         return Err(identifiants_invalides());
     }
 
@@ -263,11 +293,15 @@ pub async fn logout(
 ) -> Result<(StatusCode, CookieJar), ApiError> {
     if let Some(user) = user {
         infra::auth_repo::revoke_session(&state.pool, user.session_id, user.user_id).await?;
-    } else if let Some(raw) = jar.get(cookies::REFRESH_COOKIE).map(|c| c.value().to_owned()) {
+    } else if let Some(raw) = jar
+        .get(cookies::REFRESH_COOKIE)
+        .map(|c| c.value().to_owned())
+    {
         if let Some(lookup) =
             infra::auth_repo::find_refresh_token(&state.pool, &tokens::sha256_hex(&raw)).await?
         {
-            infra::auth_repo::revoke_session(&state.pool, lookup.session_id, lookup.user_id).await?;
+            infra::auth_repo::revoke_session(&state.pool, lookup.session_id, lookup.user_id)
+                .await?;
         }
     }
     let jar = jar
@@ -294,7 +328,10 @@ pub async fn verify_email(
     Query(query): Query<VerifyEmailQuery>,
 ) -> Result<Redirect, ApiError> {
     let destination = |statut: &str| {
-        Redirect::to(&format!("{}/verification?statut={statut}", state.config.app_base_url))
+        Redirect::to(&format!(
+            "{}/verification?statut={statut}",
+            state.config.app_base_url
+        ))
     };
 
     let Some(raw) = query.token else {
@@ -435,7 +472,10 @@ pub async fn track_event(
 ) -> Result<StatusCode, ApiError> {
     const AUTORISES: [&str; 1] = ["signup_started"];
     if !AUTORISES.contains(&body.name.as_str()) {
-        return Err(ApiError::bad_request("evenement_inconnu", "Événement non autorisé."));
+        return Err(ApiError::bad_request(
+            "evenement_inconnu",
+            "Événement non autorisé.",
+        ));
     }
     telemetry::track(
         &state,
@@ -486,9 +526,13 @@ pub async fn update_me(
 ) -> Result<Json<UserResponse>, ApiError> {
     regles::valider_pseudo(&body.pseudo).map_err(map_validation)?;
     regles::valider_code_postal(&body.postal_code).map_err(map_validation)?;
-    let compte =
-        infra::auth_repo::update_profile(&state.pool, user.user_id, &body.pseudo, &body.postal_code)
-            .await
-            .map_err(map_unique)?;
+    let compte = infra::auth_repo::update_profile(
+        &state.pool,
+        user.user_id,
+        &body.pseudo,
+        &body.postal_code,
+    )
+    .await
+    .map_err(map_unique)?;
     Ok(Json(compte.into()))
 }

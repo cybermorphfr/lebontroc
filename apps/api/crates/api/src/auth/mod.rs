@@ -19,7 +19,10 @@ pub fn router() -> Router<AppState> {
         .route("/auth/refresh", post(handlers::refresh))
         .route("/auth/logout", post(handlers::logout))
         .route("/auth/verify-email", get(handlers::verify_email))
-        .route("/auth/resend-verification", post(handlers::resend_verification))
+        .route(
+            "/auth/resend-verification",
+            post(handlers::resend_verification),
+        )
         .route(
             "/auth/sessions",
             get(handlers::list_sessions).delete(handlers::revoke_other_sessions),

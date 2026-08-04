@@ -38,10 +38,15 @@ impl AppConfig {
         let cookie_secure = std::env::var("COOKIE_SECURE")
             .map(|v| v != "false")
             .unwrap_or(true);
-        let app_base_url = std::env::var("APP_BASE_URL")
-            .map_err(|_| anyhow::anyhow!("APP_BASE_URL manquante"))?;
+        let app_base_url =
+            std::env::var("APP_BASE_URL").map_err(|_| anyhow::anyhow!("APP_BASE_URL manquante"))?;
         let analytics_salt = std::env::var("ANALYTICS_SALT")
             .map_err(|_| anyhow::anyhow!("ANALYTICS_SALT manquante"))?;
-        Ok(Self::new(&jwt_secret, cookie_secure, app_base_url, analytics_salt))
+        Ok(Self::new(
+            &jwt_secret,
+            cookie_secure,
+            app_base_url,
+            analytics_salt,
+        ))
     }
 }

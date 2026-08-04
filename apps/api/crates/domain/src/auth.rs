@@ -22,7 +22,9 @@ pub fn valider_email(email: &str) -> Result<(), ValidationError> {
     let domaine_ok = domaine.contains('.')
         && !domaine.starts_with('.')
         && !domaine.ends_with('.')
-        && domaine.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
+        && domaine
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
     if local.is_empty() || !domaine_ok || email.contains(' ') || email.len() > 254 {
         return Err(ValidationError::EmailInvalide);
     }
@@ -39,7 +41,7 @@ pub fn valider_mot_de_passe(mot_de_passe: &str) -> Result<(), ValidationError> {
 /// Pseudo : 3–30 caractères, lettres, chiffres, tirets ou underscore.
 pub fn valider_pseudo(pseudo: &str) -> Result<(), ValidationError> {
     let longueur = pseudo.chars().count();
-    if longueur < 3 || longueur > 30 {
+    if !(3..=30).contains(&longueur) {
         return Err(ValidationError::PseudoInvalide);
     }
     if !pseudo

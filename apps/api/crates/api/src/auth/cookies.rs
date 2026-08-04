@@ -29,7 +29,11 @@ fn base_cookie(name: &str, value: String, secure: bool) -> Cookie<'static> {
 }
 
 pub fn access_cookie(config: &AppConfig, token: String) -> Cookie<'static> {
-    let mut cookie = base_cookie(access_cookie_name(config.cookie_secure), token, config.cookie_secure);
+    let mut cookie = base_cookie(
+        access_cookie_name(config.cookie_secure),
+        token,
+        config.cookie_secure,
+    );
     cookie.set_path("/");
     cookie.set_max_age(time::Duration::minutes(ACCESS_TOKEN_MINUTES));
     cookie

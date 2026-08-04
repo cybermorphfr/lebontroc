@@ -50,8 +50,12 @@ fn mailer_from_env() -> anyhow::Result<infra::email::EmailSender> {
         .ok()
         .and_then(|p| p.parse().ok())
         .unwrap_or(1025);
-    let username = std::env::var("SMTP_USERNAME").ok().filter(|v| !v.is_empty());
-    let password = std::env::var("SMTP_PASSWORD").ok().filter(|v| !v.is_empty());
+    let username = std::env::var("SMTP_USERNAME")
+        .ok()
+        .filter(|v| !v.is_empty());
+    let password = std::env::var("SMTP_PASSWORD")
+        .ok()
+        .filter(|v| !v.is_empty());
     let tls = std::env::var("SMTP_TLS").unwrap_or_else(|_| "none".to_string());
     let from = std::env::var("SMTP_FROM")
         .unwrap_or_else(|_| "Lebontroc <no-reply@lebontroc.brianplus.com>".to_string());

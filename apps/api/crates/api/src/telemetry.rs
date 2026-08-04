@@ -9,7 +9,12 @@ pub fn hash_user_id(state: &AppState, user_id: Uuid) -> String {
     sha256_hex(&format!("{}{}", state.config.analytics_salt, user_id))
 }
 
-pub async fn track(state: &AppState, name: &str, user_id: Option<Uuid>, properties: serde_json::Value) {
+pub async fn track(
+    state: &AppState,
+    name: &str,
+    user_id: Option<Uuid>,
+    properties: serde_json::Value,
+) {
     let hash = user_id.map(|id| hash_user_id(state, id));
     infra::analytics::track(&state.pool, name, hash, properties).await;
 }

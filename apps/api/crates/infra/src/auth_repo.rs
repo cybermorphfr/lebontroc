@@ -66,12 +66,18 @@ pub async fn create_user(
 
 pub async fn find_user_by_email(pool: &PgPool, email: &str) -> sqlx::Result<Option<User>> {
     let sql = format!("SELECT {USER_COLUMNS} FROM users WHERE email = $1");
-    sqlx::query_as::<_, User>(&sql).bind(email).fetch_optional(pool).await
+    sqlx::query_as::<_, User>(&sql)
+        .bind(email)
+        .fetch_optional(pool)
+        .await
 }
 
 pub async fn find_user_by_id(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<User>> {
     let sql = format!("SELECT {USER_COLUMNS} FROM users WHERE id = $1");
-    sqlx::query_as::<_, User>(&sql).bind(id).fetch_optional(pool).await
+    sqlx::query_as::<_, User>(&sql)
+        .bind(id)
+        .fetch_optional(pool)
+        .await
 }
 
 pub async fn update_profile(
@@ -95,10 +101,12 @@ pub async fn update_profile(
 
 /// Pose `email_verified_at` s'il ne l'est pas déjà. Idempotent.
 pub async fn set_email_verified(pool: &PgPool, user_id: Uuid) -> sqlx::Result<()> {
-    sqlx::query("UPDATE users SET email_verified_at = now() WHERE id = $1 AND email_verified_at IS NULL")
-        .bind(user_id)
-        .execute(pool)
-        .await?;
+    sqlx::query(
+        "UPDATE users SET email_verified_at = now() WHERE id = $1 AND email_verified_at IS NULL",
+    )
+    .bind(user_id)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
@@ -177,11 +185,12 @@ pub async fn revoke_session(pool: &PgPool, session_id: Uuid, user_id: Uuid) -> s
 }
 
 pub async fn revoke_all_sessions(pool: &PgPool, user_id: Uuid) -> sqlx::Result<u64> {
-    let result =
-        sqlx::query("UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL")
-            .bind(user_id)
-            .execute(pool)
-            .await?;
+    let result = sqlx::query(
+        "UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL",
+    )
+    .bind(user_id)
+    .execute(pool)
+    .await?;
     Ok(result.rows_affected())
 }
 

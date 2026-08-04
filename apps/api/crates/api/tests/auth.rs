@@ -16,7 +16,10 @@ fn app(pool: PgPool) -> (Router, Emails) {
 }
 
 async fn call(app: &Router, request: Request<Body>) -> axum::response::Response {
-    app.clone().oneshot(request).await.expect("appel du routeur")
+    app.clone()
+        .oneshot(request)
+        .await
+        .expect("appel du routeur")
 }
 
 fn post_json(uri: &str, body: serde_json::Value, cookies: Option<&str>) -> Request<Body> {
@@ -63,7 +66,12 @@ fn cookie_header(cookies: &[(String, String)]) -> String {
 }
 
 async fn body_json(response: axum::response::Response) -> serde_json::Value {
-    let bytes = response.into_body().collect().await.expect("corps").to_bytes();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("corps")
+        .to_bytes();
     serde_json::from_slice(&bytes).expect("JSON")
 }
 
@@ -78,7 +86,11 @@ fn signup_body(email: &str, pseudo: &str) -> serde_json::Value {
 
 /// Inscrit un utilisateur et retourne l'en-tête Cookie prêt à l'emploi.
 async fn signup(app: &Router, email: &str, pseudo: &str) -> String {
-    let response = call(app, post_json("/auth/signup", signup_body(email, pseudo), None)).await;
+    let response = call(
+        app,
+        post_json("/auth/signup", signup_body(email, pseudo), None),
+    )
+    .await;
     assert_eq!(response.status(), StatusCode::CREATED);
     cookie_header(&set_cookies(&response))
 }
@@ -100,7 +112,11 @@ async fn signup_cree_connecte_et_envoie_l_email(pool: PgPool) {
     let (app, emails) = app(pool);
     let response = call(
         &app,
-        post_json("/auth/signup", signup_body("camille@exemple.fr", "camille"), None),
+        post_json(
+            "/auth/signup",
+            signup_body("camille@exemple.fr", "camille"),
+            None,
+        ),
     )
     .await;
     assert_eq!(response.status(), StatusCode::CREATED);
@@ -125,7 +141,11 @@ async fn signup_rejette_email_et_pseudo_pris(pool: PgPool) {
 
     let response = call(
         &app,
-        post_json("/auth/signup", signup_body("camille@exemple.fr", "autre"), None),
+        post_json(
+            "/auth/signup",
+            signup_body("camille@exemple.fr", "autre"),
+            None,
+        ),
     )
     .await;
     assert_eq!(response.status(), StatusCode::CONFLICT);
@@ -133,7 +153,11 @@ async fn signup_rejette_email_et_pseudo_pris(pool: PgPool) {
 
     let response = call(
         &app,
-        post_json("/auth/signup", signup_body("autre@exemple.fr", "Camille"), None),
+        post_json(
+            "/auth/signup",
+            signup_body("autre@exemple.fr", "Camille"),
+            None,
+        ),
     )
     .await;
     // Unicité insensible à la casse (citext).
@@ -178,7 +202,11 @@ async fn login_ok_puis_echec_puis_verrouillage(pool: PgPool) {
     // E-mail inconnu : même réponse générique.
     let response = call(
         &app,
-        post_json("/auth/login", serde_json::json!({"email":"inconnu@exemple.fr","password":"nimporte-quoi"}), None),
+        post_json(
+            "/auth/login",
+            serde_json::json!({"email":"inconnu@exemple.fr","password":"nimporte-quoi"}),
+            None,
+        ),
     )
     .await;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
@@ -190,7 +218,10 @@ async fn login_ok_puis_echec_puis_verrouillage(pool: PgPool) {
     // 5 échecs consécutifs → verrouillé, même avec le bon mot de passe.
     let response = call(&app, post_json("/auth/login", ok, None)).await;
     assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(body_json(response).await["error"]["code"], "compte_verrouille");
+    assert_eq!(
+        body_json(response).await["error"]["code"],
+        "compte_verrouille"
+    );
 }
 
 // ————— Vérification e-mail —————
@@ -204,22 +235,39 @@ async fn verification_email_de_bout_en_bout(pool: PgPool) {
     assert_eq!(json["email_verified"], false);
 
     let token = extract_token(&emails);
-    let response = call(&app, get(&format!("/auth/verify-email?token={token}"), None)).await;
+    let response = call(
+        &app,
+        get(&format!("/auth/verify-email?token={token}"), None),
+    )
+    .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    let location = response.headers()[header::LOCATION].to_str().expect("location");
-    assert!(location.ends_with("/verification?statut=ok"), "location: {location}");
+    let location = response.headers()[header::LOCATION]
+        .to_str()
+        .expect("location");
+    assert!(
+        location.ends_with("/verification?statut=ok"),
+        "location: {location}"
+    );
 
     let json = body_json(call(&app, get("/me", Some(&cookies))).await).await;
     assert_eq!(json["email_verified"], true);
 
     // Rejouer le même lien sur un compte vérifié → succès quand même.
-    let response = call(&app, get(&format!("/auth/verify-email?token={token}"), None)).await;
-    let location = response.headers()[header::LOCATION].to_str().expect("location");
+    let response = call(
+        &app,
+        get(&format!("/auth/verify-email?token={token}"), None),
+    )
+    .await;
+    let location = response.headers()[header::LOCATION]
+        .to_str()
+        .expect("location");
     assert!(location.ends_with("statut=ok"));
 
     // Token inconnu → invalide.
     let response = call(&app, get("/auth/verify-email?token=nimporte-quoi", None)).await;
-    let location = response.headers()[header::LOCATION].to_str().expect("location");
+    let location = response.headers()[header::LOCATION]
+        .to_str()
+        .expect("location");
     assert!(location.ends_with("statut=invalide"));
 }
 
@@ -230,9 +278,20 @@ async fn renvoi_de_verification_avec_cooldown(pool: PgPool) {
     assert_eq!(emails.lock().expect("verrou").len(), 1);
 
     // Renvoi immédiat : bloqué par le cooldown de 60 s.
-    let response = call(&app, post_json("/auth/resend-verification", serde_json::json!({}), Some(&cookies))).await;
+    let response = call(
+        &app,
+        post_json(
+            "/auth/resend-verification",
+            serde_json::json!({}),
+            Some(&cookies),
+        ),
+    )
+    .await;
     assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(body_json(response).await["error"]["code"], "renvoi_trop_rapide");
+    assert_eq!(
+        body_json(response).await["error"]["code"],
+        "renvoi_trop_rapide"
+    );
 }
 
 // ————— Refresh : rotation et rejeu (Gherkin « sécurité des sessions ») —————
@@ -243,17 +302,37 @@ async fn refresh_rotation_puis_rejeu_revoque_tout(pool: PgPool) {
     let cookies_initiaux = signup(&app, "camille@exemple.fr", "camille").await;
 
     // Rotation : le refresh fournit de nouveaux cookies.
-    let response = call(&app, post_json("/auth/refresh", serde_json::json!({}), Some(&cookies_initiaux))).await;
+    let response = call(
+        &app,
+        post_json(
+            "/auth/refresh",
+            serde_json::json!({}),
+            Some(&cookies_initiaux),
+        ),
+    )
+    .await;
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
     let nouveaux = cookie_header(&set_cookies(&response));
     assert!(nouveaux.contains("lbt_refresh="));
 
     // Rejeu de l'ancien refresh token → 401 et toutes les sessions révoquées.
-    let response = call(&app, post_json("/auth/refresh", serde_json::json!({}), Some(&cookies_initiaux))).await;
+    let response = call(
+        &app,
+        post_json(
+            "/auth/refresh",
+            serde_json::json!({}),
+            Some(&cookies_initiaux),
+        ),
+    )
+    .await;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 
     // Le nouveau token, pourtant jamais utilisé, est lui aussi mort.
-    let response = call(&app, post_json("/auth/refresh", serde_json::json!({}), Some(&nouveaux))).await;
+    let response = call(
+        &app,
+        post_json("/auth/refresh", serde_json::json!({}), Some(&nouveaux)),
+    )
+    .await;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
@@ -264,11 +343,19 @@ async fn logout_revoque_la_session(pool: PgPool) {
     let (app, _) = app(pool);
     let cookies = signup(&app, "camille@exemple.fr", "camille").await;
 
-    let response = call(&app, post_json("/auth/logout", serde_json::json!({}), Some(&cookies))).await;
+    let response = call(
+        &app,
+        post_json("/auth/logout", serde_json::json!({}), Some(&cookies)),
+    )
+    .await;
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
     // Le refresh de cette session ne fonctionne plus.
-    let response = call(&app, post_json("/auth/refresh", serde_json::json!({}), Some(&cookies))).await;
+    let response = call(
+        &app,
+        post_json("/auth/refresh", serde_json::json!({}), Some(&cookies)),
+    )
+    .await;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
@@ -277,20 +364,30 @@ async fn sessions_liste_et_revocation(pool: PgPool) {
     let (app, _) = app(pool);
     let premiere = signup(&app, "camille@exemple.fr", "camille").await;
     // Deuxième appareil.
-    let login = serde_json::json!({"email": "camille@exemple.fr", "password": "un-bon-mot-de-passe"});
+    let login =
+        serde_json::json!({"email": "camille@exemple.fr", "password": "un-bon-mot-de-passe"});
     let response = call(&app, post_json("/auth/login", login, None)).await;
     let seconde = cookie_header(&set_cookies(&response));
 
     let sessions = body_json(call(&app, get("/auth/sessions", Some(&seconde))).await).await;
     let sessions = sessions.as_array().expect("tableau").clone();
     assert_eq!(sessions.len(), 2);
-    let courante = sessions.iter().find(|s| s["current"] == true).expect("session courante");
-    let autre = sessions.iter().find(|s| s["current"] == false).expect("autre session");
+    let courante = sessions
+        .iter()
+        .find(|s| s["current"] == true)
+        .expect("session courante");
+    let autre = sessions
+        .iter()
+        .find(|s| s["current"] == false)
+        .expect("autre session");
 
     // Révoquer l'autre appareil individuellement.
     let request = Request::builder()
         .method("DELETE")
-        .uri(format!("/auth/sessions/{}", autre["id"].as_str().expect("id")))
+        .uri(format!(
+            "/auth/sessions/{}",
+            autre["id"].as_str().expect("id")
+        ))
         .header(header::COOKIE, &seconde)
         .body(Body::empty())
         .expect("requête");
@@ -298,7 +395,11 @@ async fn sessions_liste_et_revocation(pool: PgPool) {
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
     // L'ancien appareil ne peut plus rafraîchir.
-    let response = call(&app, post_json("/auth/refresh", serde_json::json!({}), Some(&premiere))).await;
+    let response = call(
+        &app,
+        post_json("/auth/refresh", serde_json::json!({}), Some(&premiere)),
+    )
+    .await;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 
     // « Déconnecter tous les autres » ne touche pas la session courante.
@@ -323,14 +424,22 @@ async fn track_event_whitelist(pool: PgPool) {
 
     let response = call(
         &app,
-        post_json("/analytics/track", serde_json::json!({"name": "signup_started"}), None),
+        post_json(
+            "/analytics/track",
+            serde_json::json!({"name": "signup_started"}),
+            None,
+        ),
     )
     .await;
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
     let response = call(
         &app,
-        post_json("/analytics/track", serde_json::json!({"name": "evenement_pirate"}), None),
+        post_json(
+            "/analytics/track",
+            serde_json::json!({"name": "evenement_pirate"}),
+            None,
+        ),
     )
     .await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);

@@ -34,14 +34,22 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(pool: PgPool, version: String, config: AppConfig, mailer: EmailSender) -> Self {
-        Self { pool, version, config: Arc::new(config), mailer }
+        Self {
+            pool,
+            version,
+            config: Arc::new(config),
+            mailer,
+        }
     }
 
     /// État prêt à l'emploi pour les tests d'intégration : cookies non Secure,
     /// e-mails capturés en mémoire.
     pub fn for_tests(
         pool: PgPool,
-    ) -> (Self, std::sync::Arc<std::sync::Mutex<Vec<infra::email::CapturedEmail>>>) {
+    ) -> (
+        Self,
+        std::sync::Arc<std::sync::Mutex<Vec<infra::email::CapturedEmail>>>,
+    ) {
         let (mailer, emails) = EmailSender::capture();
         let config = AppConfig::new(
             "secret-de-test-secret-de-test-secret",
@@ -49,7 +57,10 @@ impl AppState {
             "http://localhost:3000".to_string(),
             "sel-de-test".to_string(),
         );
-        (Self::new(pool, "0.1.0+test".to_string(), config, mailer), emails)
+        (
+            Self::new(pool, "0.1.0+test".to_string(), config, mailer),
+            emails,
+        )
     }
 }
 

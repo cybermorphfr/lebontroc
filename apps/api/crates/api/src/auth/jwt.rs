@@ -17,7 +17,11 @@ struct Claims {
     exp: i64,
 }
 
-pub fn encode_access(config: &AppConfig, user_id: Uuid, session_id: Uuid) -> anyhow::Result<String> {
+pub fn encode_access(
+    config: &AppConfig,
+    user_id: Uuid,
+    session_id: Uuid,
+) -> anyhow::Result<String> {
     let now = Utc::now().timestamp();
     let claims = Claims {
         sub: user_id.to_string(),

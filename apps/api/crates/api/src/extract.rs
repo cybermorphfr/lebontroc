@@ -34,7 +34,10 @@ impl FromRequestParts<AppState> for CurrentUser {
             .ok_or_else(|| ApiError::unauthorized("Connecte-toi pour continuer."))?;
         let (user_id, session_id) = decode_access(&state.config, &token)
             .ok_or_else(|| ApiError::unauthorized("Ta session a expiré. Reconnecte-toi."))?;
-        Ok(CurrentUser { user_id, session_id })
+        Ok(CurrentUser {
+            user_id,
+            session_id,
+        })
     }
 }
 

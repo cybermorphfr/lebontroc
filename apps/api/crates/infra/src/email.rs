@@ -18,8 +18,8 @@ pub struct CapturedEmail {
 #[derive(Clone)]
 pub enum EmailSender {
     Smtp {
-        transport: AsyncSmtpTransport<Tokio1Executor>,
-        from: Mailbox,
+        transport: Box<AsyncSmtpTransport<Tokio1Executor>>,
+        from: Box<Mailbox>,
     },
     Capture(Arc<Mutex<Vec<CapturedEmail>>>),
 }
@@ -45,8 +45,11 @@ impl EmailSender {
             builder = builder.credentials(Credentials::new(username, password));
         }
         Ok(EmailSender::Smtp {
-            transport: builder.build(),
-            from: from.parse().map_err(|e| anyhow::anyhow!("SMTP_FROM invalide : {e}"))?,
+            transport: Box::new(builder.build()),
+            from: Box::new(
+                from.parse()
+                    .map_err(|e| anyhow::anyhow!("SMTP_FROM invalide : {e}"))?,
+            ),
         })
     }
 
@@ -55,12 +58,20 @@ impl EmailSender {
         (EmailSender::Capture(store.clone()), store)
     }
 
-    async fn send(&self, to: &str, subject: &str, text: String, html: String) -> anyhow::Result<()> {
+    async fn send(
+        &self,
+        to: &str,
+        subject: &str,
+        text: String,
+        html: String,
+    ) -> anyhow::Result<()> {
         match self {
             EmailSender::Smtp { transport, from } => {
                 let message = Message::builder()
-                    .from(from.clone())
-                    .to(to.parse().map_err(|e| anyhow::anyhow!("destinataire invalide : {e}"))?)
+                    .from((**from).clone())
+                    .to(to
+                        .parse()
+                        .map_err(|e| anyhow::anyhow!("destinataire invalide : {e}"))?)
                     .subject(subject)
                     .multipart(MultiPart::alternative_plain_html(text, html))?;
                 transport.send(message).await?;
