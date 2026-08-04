@@ -294,10 +294,7 @@
             "description": "Token du lien e-mail",
             "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           }
         ],
