@@ -33,10 +33,7 @@ mod tests {
 
     #[test]
     fn tout_ok_donne_ok() {
-        assert_eq!(
-            overall_status(&[DependencyStatus::Ok]),
-            HealthStatus::Ok
-        );
+        assert_eq!(overall_status(&[DependencyStatus::Ok]), HealthStatus::Ok);
     }
 
     #[test]

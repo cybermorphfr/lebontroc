@@ -16,6 +16,8 @@ jobs:
   api:
     name: API — fmt, clippy, tests, OpenAPI
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     defaults:
       run:
         working-directory: apps/api
@@ -51,9 +53,14 @@ jobs:
         run: cargo test --workspace
       - name: Contrat OpenAPI synchronisé
         run: |
-          cargo run --quiet --bin dump-openapi > /tmp/openapi.json
-          if ! diff -u ../../packages/api-client/openapi.json /tmp/openapi.json; then
-            echo "::error::Contrat OpenAPI divergent. Remplacer packages/api-client/openapi.json par la sortie de dump-openapi (diff ci-dessus)."
+          cargo run --quiet --bin dump-openapi > ../../packages/api-client/openapi.json
+          if ! git diff --quiet -- ../../packages/api-client/openapi.json; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add ../../packages/api-client/openapi.json
+            git commit -m "chore: resynchronise openapi.json depuis le code Rust [skip ci]"
+            git push
+            echo "::error::Contrat OpenAPI divergent — la version régénérée vient d'être committée. Re-lancer la CI."
             exit 1
           fi
 
