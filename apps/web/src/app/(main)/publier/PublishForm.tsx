@@ -90,20 +90,24 @@ export function PublishForm({
       : "Ce n'est pas un prix — juste un repère pour équilibrer les trocs.";
 
   const uploading = photos.some((p) => p.uploading);
+  const failedCount = photos.filter((p) => p.failed).length;
   const buttonLabel = !verified
     ? "Vérifie ton e-mail pour publier"
     : photos.length === 0
       ? "Ajoute au moins une photo"
       : uploading
         ? "Envoi des photos…"
-        : submitting
-          ? editItem
-            ? "Enregistrement…"
-            : "Publication…"
-          : editItem
-            ? "Enregistrer"
-            : "Publier";
-  const buttonDisabled = !verified || photos.length === 0 || uploading || submitting;
+        : failedCount > 0
+          ? "Une photo n'a pas pu être envoyée"
+          : submitting
+            ? editItem
+              ? "Enregistrement…"
+              : "Publication…"
+            : editItem
+              ? "Enregistrer"
+              : "Publier";
+  const buttonDisabled =
+    !verified || photos.length === 0 || uploading || failedCount > 0 || submitting;
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -118,9 +122,13 @@ export function PublishForm({
     setErrors(next);
     if (Object.keys(next).length > 0) return;
 
+    const photoIds = photos.map((p) => p.photoId).filter((id): id is string => id !== null);
+    if (photoIds.length === 0) {
+      setPhotoError("L'envoi a échoué. Touche la photo pour réessayer.");
+      return;
+    }
     setSubmitting(true);
     setGlobalError(null);
-    const photoIds = photos.map((p) => p.photoId).filter((id): id is string => id !== null);
     const payload = {
       title: title.trim(),
       description: description.trim(),
