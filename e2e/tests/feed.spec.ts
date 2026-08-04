@@ -111,5 +111,6 @@ test("le fil privilégie le local, la fiche montre la ville sans jamais l'adress
 
   // Encart propriétaire → dressing public.
   await page.getByRole("link", { name: /Voir son dressing/ }).click();
-  await expect(page.getByText("Théière lointaine")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Son dressing" })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Théière lointaine/ })).toBeVisible();
 });
