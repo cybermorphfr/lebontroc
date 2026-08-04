@@ -84,7 +84,8 @@ test("contre-proposition puis acceptation : troc conclu, objets réservés", asy
   await page.getByRole("button", { name: /Envoyer ma proposition/ }).click();
   await expect(page.getByRole("heading", { name: "Conversation" })).toBeVisible();
 
-  // Alice contre-propose : mêmes objets, mais Bob ajoute 20 €.
+  // Alice contre-propose (sans soulte — pendant la bêta, seuls les trocs
+  // sans soulte se concluent ; la garde est couverte par les tests SQL).
   await pageAlice.goto("/trocs");
   await pageAlice.getByRole("link", { name: /objet(s)? contre/ }).click();
   await pageAlice.getByRole("link", { name: "Contre-proposer" }).click();
@@ -94,15 +95,12 @@ test("contre-proposition puis acceptation : troc conclu, objets réservés", asy
   // La composition initiale est préremplie (draisienne offerte, jeu demandé).
   await expect(pageAlice.getByRole("button", { name: `Retirer ${velo}` })).toBeVisible();
   await expect(pageAlice.getByRole("button", { name: `Retirer ${jeu}` })).toBeVisible();
-  await pageAlice.getByText(/en ajoute/, { exact: false }).click();
-  await pageAlice.getByLabel("Montant de la soulte").fill("20");
   await pageAlice.getByRole("button", { name: /Envoyer ma contre-proposition/ }).click();
   await expect(pageAlice.getByText("Envoyée")).toBeVisible();
 
   // Bob voit la contre-proposition et l'accepte en main propre.
   await page.goto("/trocs");
   await page.getByRole("link", { name: /De acc/ }).click();
-  await expect(page.getByText("+ 20 € de soulte")).toBeVisible();
   await page.getByRole("button", { name: "Accepter" }).click();
   await page.getByRole("button", { name: "En main propre" }).click();
   await expect(page.getByText(/Troc conclu/)).toBeVisible();
