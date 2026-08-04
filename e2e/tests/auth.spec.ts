@@ -49,7 +49,9 @@ test("inscription, e-mail de vérification, lien cliqué : compte vérifié", as
   const email = uniqueEmail();
   await signup(page, email, `camille${Date.now() % 100000}`);
 
-  await expect(page.getByText("Vérifie ta boîte mail")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Vérifie ta boîte mail" }),
+  ).toBeVisible();
   await expect(page.getByText(email)).toBeVisible();
 
   const link = await verificationLink(email);
