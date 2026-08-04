@@ -57,6 +57,12 @@ export function DressingGrid({ items }: { items: ItemResponse[] }) {
     setConfirmDelete(false);
   }
 
+  const toastElement = toast ? (
+    <p className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-full bg-encre px-5 py-2 text-sm text-creme shadow-lg">
+      {toast}
+    </p>
+  ) : null;
+
   if (items.length === 0) {
     return (
       <div className="flex flex-col items-start gap-3 rounded-[32px] bg-sable p-6 shadow-sm">
@@ -70,6 +76,7 @@ export function DressingGrid({ items }: { items: ItemResponse[] }) {
         >
           Publier un objet
         </Link>
+        {toastElement}
       </div>
     );
   }
@@ -117,11 +124,7 @@ export function DressingGrid({ items }: { items: ItemResponse[] }) {
         Les objets masqués ne sont visibles que par toi.
       </p>
 
-      {toast ? (
-        <p className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-full bg-encre px-5 py-2 text-sm text-creme shadow-lg">
-          {toast}
-        </p>
-      ) : null}
+      {toastElement}
 
       <BottomSheet
         open={selected !== null}
