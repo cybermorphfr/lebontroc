@@ -13,7 +13,7 @@ use uuid::Uuid;
 use crate::catalog::dto::{
     CategoryNode, CreateItemRequest, FeedCard, FeedResponse, ItemDetailResponse, ItemOwnerResponse,
     ItemPhotoResponse, ItemResponse, PresignRequest, PresignedPhoto, PublicProfileResponse,
-    ReplacePhotosRequest, UpdateItemRequest,
+    ReplacePhotosRequest, SearchResponse, UpdateItemRequest,
 };
 use crate::error::ApiError;
 use crate::extract::CurrentUser;
@@ -95,6 +95,7 @@ fn item_response(
         value_cents: item.value_cents,
         delivery_pref: item.delivery_pref,
         exchange_wishes: item.exchange_wishes,
+        accepts_soulte: item.accepts_soulte,
         photos: photos
             .into_iter()
             .map(|p| ItemPhotoResponse {
@@ -315,6 +316,7 @@ pub async fn create_item(
             value_cents: body.value_cents,
             delivery_pref: &body.delivery_pref,
             exchange_wishes: exchange_wishes.as_deref(),
+            accepts_soulte: body.accepts_soulte,
         },
         &uploads,
     )
@@ -430,6 +432,137 @@ pub async fn feed(
     .await;
 
     Ok(Json(FeedResponse {
+        items: rows
+            .into_iter()
+            .map(|row| FeedCard {
+                photo_url: cover_by_item.remove(&row.id),
+                id: row.id,
+                title: row.title,
+                condition: row.condition,
+                value_cents: row.value_cents,
+                city: row.city,
+                distance_km: row.distance_km.map(arrondi_km),
+                created_at: row.created_at,
+            })
+            .collect(),
+        page,
+        has_more,
+    }))
+}
+
+#[derive(Deserialize)]
+pub struct SearchQuery {
+    pub q: Option<String>,
+    pub category_id: Option<i16>,
+    pub condition: Option<String>,
+    pub delivery: Option<String>,
+    pub soulte: Option<bool>,
+    pub max_km: Option<f64>,
+    pub sort: Option<String>,
+    pub page: Option<u32>,
+}
+
+/// Recherche d'objets : plein texte tolérant aux fautes + filtres combinables.
+/// Le filtre distance et le tri distance supposent un visiteur connecté
+/// (localisé par sa commune) — ignorés sinon.
+#[utoipa::path(
+    get,
+    path = "/search",
+    tag = "catalog",
+    params(
+        ("q" = Option<String>, Query, description = "Texte libre (fautes tolérées)"),
+        ("category_id" = Option<i16>, Query, description = "Catégorie (les sous-catégories sont incluses)"),
+        ("condition" = Option<String>, Query, description = "neuf, tres_bon_etat, bon_etat ou correct"),
+        ("delivery" = Option<String>, Query, description = "main_propre ou envoi (les_deux satisfait les deux)"),
+        ("soulte" = Option<bool>, Query, description = "true : uniquement les objets acceptant une soulte"),
+        ("max_km" = Option<f64>, Query, description = "Distance maximale en km (visiteur connecté)"),
+        ("sort" = Option<String>, Query, description = "pertinence (défaut), distance ou recence"),
+        ("page" = Option<u32>, Query, description = "Page (1 par défaut, 24 résultats par page)")
+    ),
+    responses((status = 200, description = "Résultats paginés", body = SearchResponse))
+)]
+pub async fn search(
+    State(state): State<AppState>,
+    viewer: Option<CurrentUser>,
+    Query(query): Query<SearchQuery>,
+) -> Result<Json<SearchResponse>, ApiError> {
+    let page = query.page.unwrap_or(1).clamp(1, 500);
+    let coords = viewer_coords(&state, viewer.as_ref()).await?;
+    let q = query
+        .q
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.chars().take(120).collect::<String>());
+
+    let condition = query
+        .condition
+        .filter(|c| ["neuf", "tres_bon_etat", "bon_etat", "correct"].contains(&c.as_str()));
+    let delivery = query
+        .delivery
+        .filter(|d| ["main_propre", "envoi"].contains(&d.as_str()));
+    let max_km = query.max_km.filter(|km| (1.0..=1000.0).contains(km));
+
+    let sort = match query.sort.as_deref() {
+        Some("distance") if coords.is_some() => infra::search::SearchSort::Distance,
+        Some("recence") => infra::search::SearchSort::Recence,
+        _ => infra::search::SearchSort::Pertinence,
+    };
+
+    let params = infra::search::SearchParams {
+        query: q.clone(),
+        category_id: query.category_id,
+        condition,
+        delivery_pref: delivery,
+        accepts_soulte: query.soulte,
+        max_km,
+        viewer: coords,
+        limit: FEED_PAGE_SIZE + 1,
+        offset: (i64::from(page) - 1) * FEED_PAGE_SIZE,
+    };
+    let mut rows = state
+        .search
+        .search(&params, sort)
+        .await
+        .map_err(ApiError::internal)?;
+    let has_more = rows.len() as i64 > FEED_PAGE_SIZE;
+    rows.truncate(FEED_PAGE_SIZE as usize);
+
+    let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
+    let mut cover_by_item: HashMap<Uuid, String> = HashMap::new();
+    for photo in infra::catalog_repo::photos_for_items(&state.pool, &ids).await? {
+        cover_by_item
+            .entry(photo.item_id)
+            .or_insert_with(|| state.photos.public_url(&photo.s3_key));
+    }
+
+    if page == 1 {
+        telemetry::track(
+            &state,
+            "search_performed",
+            viewer.as_ref().map(|v| v.user_id),
+            json!({
+                "query_length": q.as_deref().map(str::len).unwrap_or(0),
+                "filters": {
+                    "category_id": params.category_id,
+                    "condition": params.condition,
+                    "delivery": params.delivery_pref,
+                    "soulte": params.accepts_soulte,
+                    "max_km": params.max_km,
+                    "sort": match sort {
+                        infra::search::SearchSort::Pertinence => "pertinence",
+                        infra::search::SearchSort::Distance => "distance",
+                        infra::search::SearchSort::Recence => "recence",
+                    },
+                },
+                "results_count": rows.len(),
+                "logged_in": viewer.is_some(),
+            }),
+        )
+        .await;
+    }
+
+    Ok(Json(SearchResponse {
         items: rows
             .into_iter()
             .map(|row| FeedCard {
@@ -710,6 +843,7 @@ pub async fn update_item(
             value_cents: body.value_cents,
             delivery_pref: &body.delivery_pref,
             exchange_wishes: exchange_wishes.as_deref(),
+            accepts_soulte: body.accepts_soulte.unwrap_or(existing.accepts_soulte),
             status: &body.status,
         },
     )

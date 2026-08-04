@@ -17,6 +17,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 use infra::email::EmailSender;
 use infra::s3::PhotoStore;
+use infra::search::{PgSearchRepository, SearchRepository};
 use sqlx::PgPool;
 use tower::ServiceBuilder;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
@@ -33,6 +34,8 @@ pub struct AppState {
     pub config: Arc<AppConfig>,
     pub mailer: EmailSender,
     pub photos: PhotoStore,
+    /// Recherche derrière un trait : Postgres au MVP, Meilisearch en V2.
+    pub search: Arc<dyn SearchRepository>,
 }
 
 impl AppState {
@@ -43,12 +46,14 @@ impl AppState {
         mailer: EmailSender,
         photos: PhotoStore,
     ) -> Self {
+        let search = Arc::new(PgSearchRepository::new(pool.clone()));
         Self {
             pool,
             version,
             config: Arc::new(config),
             mailer,
             photos,
+            search,
         }
     }
 

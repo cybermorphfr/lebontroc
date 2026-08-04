@@ -846,6 +846,105 @@
         }
       }
     },
+    "/search": {
+      "get": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Recherche d'objets : plein texte tolérant aux fautes + filtres combinables.\nLe filtre distance et le tri distance supposent un visiteur connecté\n(localisé par sa commune) — ignorés sinon.",
+        "operationId": "search",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Texte libre (fautes tolérées)",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "category_id",
+            "in": "query",
+            "description": "Catégorie (les sous-catégories sont incluses)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "condition",
+            "in": "query",
+            "description": "neuf, tres_bon_etat, bon_etat ou correct",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "delivery",
+            "in": "query",
+            "description": "main_propre ou envoi (les_deux satisfait les deux)",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "soulte",
+            "in": "query",
+            "description": "true : uniquement les objets acceptant une soulte",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "max_km",
+            "in": "query",
+            "description": "Distance maximale en km (visiteur connecté)",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "pertinence (défaut), distance ou recence",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "description": "Page (1 par défaut, 24 résultats par page)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Résultats paginés",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/troqueurs/{pseudo}": {
       "get": {
         "tags": [
@@ -959,6 +1058,10 @@
           "photos"
         ],
         "properties": {
+          "accepts_soulte": {
+            "type": "boolean",
+            "description": "L'objet peut s'échanger avec un complément en euros (vrai par défaut)."
+          },
           "category_id": {
             "type": "integer",
             "format": "int32"
@@ -1241,10 +1344,14 @@
           "status",
           "value_cents",
           "delivery_pref",
+          "accepts_soulte",
           "photos",
           "created_at"
         ],
         "properties": {
+          "accepts_soulte": {
+            "type": "boolean"
+          },
           "category_id": {
             "type": "integer",
             "format": "int32"
@@ -1408,6 +1515,32 @@
           }
         }
       },
+      "SearchResponse": {
+        "type": "object",
+        "description": "Résultats de recherche — mêmes cartes que le fil.",
+        "required": [
+          "items",
+          "page",
+          "has_more"
+        ],
+        "properties": {
+          "has_more": {
+            "type": "boolean",
+            "description": "`true` s'il reste des résultats à charger."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FeedCard"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "SessionResponse": {
         "type": "object",
         "required": [
@@ -1486,6 +1619,14 @@
             "type": "string",
             "description": "Nom d'événement d'interface autorisé (ex. `signup_started`).",
             "example": "signup_started"
+          },
+          "position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Position dans une liste de résultats (`search_result_clicked`)."
           }
         }
       },
@@ -1501,6 +1642,13 @@
           "status"
         ],
         "properties": {
+          "accepts_soulte": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "`None` = inchangé."
+          },
           "category_id": {
             "type": "integer",
             "format": "int32"

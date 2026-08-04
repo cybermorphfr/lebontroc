@@ -57,6 +57,7 @@ export function PublishForm({
   );
   const [deliveryPref, setDeliveryPref] = useState(editItem?.delivery_pref ?? "main_propre");
   const [wishes, setWishes] = useState(editItem?.exchange_wishes ?? "");
+  const [acceptsSoulte, setAcceptsSoulte] = useState(editItem?.accepts_soulte ?? true);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [photoError, setPhotoError] = useState<string | null>(null);
   const [globalError, setGlobalError] = useState<string | null>(null);
@@ -137,6 +138,7 @@ export function PublishForm({
       value_cents: valueNumber * 100,
       delivery_pref: deliveryPref,
       exchange_wishes: wishes.trim() || null,
+      accepts_soulte: acceptsSoulte,
     };
 
     let response: Response;
@@ -291,6 +293,21 @@ export function PublishForm({
         onChange={(e) => setWishes(e.target.value)}
         maxLength={300}
       />
+
+      <label className="flex cursor-pointer items-center justify-between gap-3 rounded-3xl bg-sable p-4">
+        <span className="flex flex-col">
+          <span className="text-sm font-semibold">J&apos;accepte une soulte</span>
+          <span className="text-xs text-neutre-700">
+            Un complément en euros si les valeurs ne collent pas tout à fait.
+          </span>
+        </span>
+        <input
+          type="checkbox"
+          checked={acceptsSoulte}
+          onChange={(e) => setAcceptsSoulte(e.target.checked)}
+          className="size-5 accent-[#c67139]"
+        />
+      </label>
 
       {globalError ? (
         <p className="rounded-full bg-terracotta-100 px-4 py-2 text-sm text-terracotta-800">

@@ -470,11 +470,12 @@ pub async fn track_event(
     user: Option<CurrentUser>,
     Json(body): Json<TrackRequest>,
 ) -> Result<StatusCode, ApiError> {
-    const AUTORISES: [&str; 4] = [
+    const AUTORISES: [&str; 5] = [
         "signup_started",
         "item_publish_started",
         "item_publish_abandoned",
         "item_gallery_opened",
+        "search_result_clicked",
     ];
     if !AUTORISES.contains(&body.name.as_str()) {
         return Err(ApiError::bad_request(
@@ -486,7 +487,7 @@ pub async fn track_event(
         &state,
         &body.name,
         user.map(|u| u.user_id),
-        json!({"source": "front", "item_id": body.item_id}),
+        json!({"source": "front", "item_id": body.item_id, "position": body.position}),
     )
     .await;
     Ok(StatusCode::NO_CONTENT)

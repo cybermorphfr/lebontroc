@@ -57,6 +57,9 @@ pub struct CreateItemRequest {
     #[schema(example = "main_propre")]
     pub delivery_pref: String,
     pub exchange_wishes: Option<String>,
+    /// L'objet peut s'échanger avec un complément en euros (vrai par défaut).
+    #[serde(default = "vrai")]
+    pub accepts_soulte: bool,
     /// Ids issus de /items/photos/presign, dans l'ordre d'affichage (1–8).
     pub photos: Vec<Uuid>,
     /// Durée du flux de publication côté client (KPI « moins de 2 minutes »).
@@ -74,6 +77,8 @@ pub struct UpdateItemRequest {
     pub value_cents: i32,
     pub delivery_pref: String,
     pub exchange_wishes: Option<String>,
+    /// `None` = inchangé.
+    pub accepts_soulte: Option<bool>,
     /// `disponible` ou `masque` uniquement.
     pub status: String,
 }
@@ -100,6 +105,19 @@ pub struct PublicProfileResponse {
     pub member_since: DateTime<Utc>,
     /// Objets disponibles uniquement — jamais les masqués.
     pub items: Vec<ItemResponse>,
+}
+
+fn vrai() -> bool {
+    true
+}
+
+/// Résultats de recherche — mêmes cartes que le fil.
+#[derive(Serialize, ToSchema)]
+pub struct SearchResponse {
+    pub items: Vec<FeedCard>,
+    pub page: u32,
+    /// `true` s'il reste des résultats à charger.
+    pub has_more: bool,
 }
 
 /// Carte du fil d'accueil — volontairement légère (grille photo).
@@ -157,6 +175,7 @@ pub struct ItemResponse {
     pub value_cents: i32,
     pub delivery_pref: String,
     pub exchange_wishes: Option<String>,
+    pub accepts_soulte: bool,
     pub photos: Vec<ItemPhotoResponse>,
     pub created_at: DateTime<Utc>,
 }

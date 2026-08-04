@@ -733,3 +733,151 @@ async fn fiche_publique_dun_objet_masque_introuvable_pour_les_autres(pool: PgPoo
     .await;
     assert_eq!(response.status(), StatusCode::OK);
 }
+
+// ————— Recherche (F2.2) —————
+
+/// Publie un objet en fixant titre + catégorie + remise (+ soulte).
+async fn publish_custom(
+    app: &Router,
+    cookies: &str,
+    title: &str,
+    category_id: i16,
+    delivery: &str,
+    soulte: bool,
+) -> String {
+    let photos = presign(app, cookies, 1).await;
+    let mut body = item_body(&photos);
+    body["title"] = serde_json::Value::String(title.to_string());
+    body["category_id"] = serde_json::json!(category_id);
+    body["delivery_pref"] = serde_json::Value::String(delivery.to_string());
+    body["accepts_soulte"] = serde_json::Value::Bool(soulte);
+    let response = call(app, request("POST", "/items", Some(body), Some(cookies))).await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    body_json(response).await["id"]
+        .as_str()
+        .expect("id")
+        .to_string()
+}
+
+fn search_titles(json: &serde_json::Value) -> Vec<String> {
+    json["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|i| i["title"].as_str().expect("title").to_string())
+        .collect()
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn la_recherche_tolere_les_fautes(pool: PgPool) {
+    let (app, emails) = app(pool);
+    let cookies = verified_user(&app, &emails, "vendeur@exemple.fr", "vendeur").await;
+    publish_titled(&app, &cookies, "Poussette Yoyo").await;
+
+    // Gherkin F2.2 : « pousette » trouve « Poussette Yoyo ».
+    let json = body_json(call(&app, request("GET", "/search?q=pousette", None, None)).await).await;
+    assert_eq!(search_titles(&json), vec!["Poussette Yoyo"]);
+
+    // La forme exacte fonctionne évidemment aussi (FTS français).
+    let json = body_json(call(&app, request("GET", "/search?q=poussette", None, None)).await).await;
+    assert_eq!(search_titles(&json), vec!["Poussette Yoyo"]);
+
+    // Un terme sans rapport ne renvoie rien.
+    let json = body_json(call(&app, request("GET", "/search?q=aquarium", None, None)).await).await;
+    assert!(search_titles(&json).is_empty());
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn les_filtres_combines_sont_tous_respectes(pool: PgPool) {
+    let (app, emails) = app(pool);
+
+    // L'id de la racine « enfants » vient du référentiel, pas d'un magic number.
+    let categories = body_json(call(&app, request("GET", "/categories", None, None)).await).await;
+    let enfants = categories
+        .as_array()
+        .expect("racines")
+        .iter()
+        .find(|c| c["slug"] == "enfants")
+        .expect("racine enfants")["id"]
+        .as_i64()
+        .expect("id");
+
+    let nantes = verified_user_at(&app, &emails, "n@exemple.fr", "nantais", "44300").await;
+    publish_custom(&app, &nantes, "Poussette proche", 31, "main_propre", true).await;
+    publish_custom(&app, &nantes, "Poussette en envoi", 31, "envoi", true).await;
+    let paris = verified_user_at(&app, &emails, "p@exemple.fr", "parisien", "75001").await;
+    publish_custom(&app, &paris, "Poussette lointaine", 31, "main_propre", true).await;
+
+    // Gherkin F2.2 : « enfants » + « moins de 10 km » + « main propre ».
+    let viewer = verified_user_at(&app, &emails, "v@exemple.fr", "chercheur", "44000").await;
+    let uri = format!("/search?category_id={enfants}&max_km=10&delivery=main_propre");
+    let json = body_json(call(&app, request("GET", &uri, None, Some(&viewer))).await).await;
+    assert_eq!(search_titles(&json), vec!["Poussette proche"]);
+
+    // Un objet « les_deux » satisfait le filtre « main_propre ».
+    publish_custom(&app, &nantes, "Poussette flexible", 31, "les_deux", true).await;
+    let json = body_json(call(&app, request("GET", &uri, None, Some(&viewer))).await).await;
+    let titres = search_titles(&json);
+    assert!(titres.contains(&"Poussette flexible".to_string()));
+    assert!(!titres.contains(&"Poussette en envoi".to_string()));
+    assert!(!titres.contains(&"Poussette lointaine".to_string()));
+
+    // Anonyme : le filtre distance est ignoré (pas de point de vue).
+    let json = body_json(call(&app, request("GET", "/search?max_km=10", None, None)).await).await;
+    assert_eq!(json["items"].as_array().expect("items").len(), 4);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn le_filtre_soulte_et_les_tris(pool: PgPool) {
+    let (app, emails) = app(pool);
+    let nantes = verified_user_at(&app, &emails, "n2@exemple.fr", "nantais2", "44300").await;
+    publish_custom(&app, &nantes, "Objet sans argent", 31, "les_deux", false).await;
+    let paris = verified_user_at(&app, &emails, "p2@exemple.fr", "parisien2", "75001").await;
+    publish_custom(&app, &paris, "Objet avec soulte", 31, "les_deux", true).await;
+
+    // Filtre « accepte une soulte ».
+    let json = body_json(call(&app, request("GET", "/search?soulte=true", None, None)).await).await;
+    assert_eq!(search_titles(&json), vec!["Objet avec soulte"]);
+
+    // La fiche expose le refus de soulte.
+    let json = body_json(call(&app, request("GET", "/search?q=argent", None, None)).await).await;
+    let id = json["items"][0]["id"].as_str().expect("id").to_string();
+    let fiche = body_json(
+        call(
+            &app,
+            request("GET", &format!("/items/{id}/public"), None, None),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(fiche["item"]["accepts_soulte"], false);
+
+    // Tri récence : le plus récent d'abord, quel que soit l'éloignement.
+    let viewer = verified_user_at(&app, &emails, "v2@exemple.fr", "chercheur2", "44000").await;
+    let json = body_json(
+        call(
+            &app,
+            request("GET", "/search?sort=recence", None, Some(&viewer)),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(
+        search_titles(&json),
+        vec!["Objet avec soulte", "Objet sans argent"]
+    );
+
+    // Tri distance : le nantais d'abord pour un chercheur nantais.
+    let json = body_json(
+        call(
+            &app,
+            request("GET", "/search?sort=distance", None, Some(&viewer)),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(
+        search_titles(&json),
+        vec!["Objet sans argent", "Objet avec soulte"]
+    );
+}

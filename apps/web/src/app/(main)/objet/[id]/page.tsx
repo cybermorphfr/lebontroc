@@ -99,6 +99,7 @@ export default async function ObjetPage({
             <div className="flex flex-wrap gap-2">
               <Tag variant="accent-2">{CONDITION_LABELS[item.condition] ?? item.condition}</Tag>
               <Tag variant="neutral">{DELIVERY_LABELS[item.delivery_pref] ?? item.delivery_pref}</Tag>
+              {!item.accepts_soulte ? <Tag variant="neutral">Troc sans argent</Tag> : null}
             </div>
             {owner.city ? (
               <p className="text-sm text-neutre-700">

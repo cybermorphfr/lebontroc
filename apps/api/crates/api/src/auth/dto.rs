@@ -31,6 +31,8 @@ pub struct TrackRequest {
     pub name: String,
     /// Objet concerné, le cas échéant (ex. `item_gallery_opened`).
     pub item_id: Option<uuid::Uuid>,
+    /// Position dans une liste de résultats (`search_result_clicked`).
+    pub position: Option<i32>,
 }
 
 #[derive(Deserialize, ToSchema)]

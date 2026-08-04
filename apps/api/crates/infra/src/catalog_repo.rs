@@ -137,6 +137,8 @@ pub struct Item {
     pub value_cents: i32,
     pub delivery_pref: String,
     pub exchange_wishes: Option<String>,
+    /// L'objet peut s'échanger avec un complément en euros (filtre F2.2).
+    pub accepts_soulte: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub deleted_at: Option<DateTime<Utc>>,
@@ -159,6 +161,7 @@ pub struct NewItem<'a> {
     pub value_cents: i32,
     pub delivery_pref: &'a str,
     pub exchange_wishes: Option<&'a str>,
+    pub accepts_soulte: bool,
 }
 
 /// Crée l'objet et rattache les photos (dans l'ordre fourni) en une
@@ -171,8 +174,8 @@ pub async fn create_item(
 ) -> sqlx::Result<Item> {
     let mut tx = pool.begin().await?;
     let item = sqlx::query_as::<_, Item>(
-        "INSERT INTO items (owner_id, title, description, category_id, condition, value_cents, delivery_pref, exchange_wishes) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *",
+        "INSERT INTO items (owner_id, title, description, category_id, condition, value_cents, delivery_pref, exchange_wishes, accepts_soulte) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *",
     )
     .bind(owner_id)
     .bind(new_item.title)
@@ -182,6 +185,7 @@ pub async fn create_item(
     .bind(new_item.value_cents)
     .bind(new_item.delivery_pref)
     .bind(new_item.exchange_wishes)
+    .bind(new_item.accepts_soulte)
     .fetch_one(&mut *tx)
     .await?;
 
@@ -336,6 +340,7 @@ pub struct ItemUpdate<'a> {
     pub value_cents: i32,
     pub delivery_pref: &'a str,
     pub exchange_wishes: Option<&'a str>,
+    pub accepts_soulte: bool,
     pub status: &'a str,
 }
 
@@ -350,7 +355,7 @@ pub async fn update_item(
     sqlx::query_as::<_, Item>(
         "UPDATE items SET title = $3, description = $4, category_id = $5, condition = $6, \
          value_cents = $7, delivery_pref = $8, exchange_wishes = $9, status = $10, \
-         updated_at = now() \
+         accepts_soulte = $11, updated_at = now() \
          WHERE id = $1 AND owner_id = $2 RETURNING *",
     )
     .bind(item_id)
@@ -363,6 +368,7 @@ pub async fn update_item(
     .bind(update.delivery_pref)
     .bind(update.exchange_wishes)
     .bind(update.status)
+    .bind(update.accepts_soulte)
     .fetch_optional(pool)
     .await
 }
