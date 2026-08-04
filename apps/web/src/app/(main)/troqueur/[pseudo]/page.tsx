@@ -1,0 +1,153 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import { cookies } from "next/headers";
+import { createApiClient } from "@lebontroc/api-client";
+
+import { AvatarLetter } from "@/components/AvatarLetter";
+import { Tag } from "@/components/ui/Tag";
+import { getCurrentUser } from "@/lib/server-api";
+
+export const dynamic = "force-dynamic";
+
+const CONDITION_LABELS: Record<string, string> = {
+  neuf: "Neuf",
+  tres_bon_etat: "Très bon état",
+  bon_etat: "Bon état",
+  correct: "Correct",
+};
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ pseudo: string }>;
+}): Promise<Metadata> {
+  const { pseudo } = await params;
+  return { title: `${decodeURIComponent(pseudo)} — Lebontroc` };
+}
+
+function ancrage(memberSince: string): string {
+  const date = new Date(memberSince);
+  if (Date.now() - date.getTime() < 30 * 24 * 3600 * 1000) return "Vient d'arriver";
+  const mois = new Intl.DateTimeFormat("fr-FR", { month: "long", year: "numeric" }).format(date);
+  return `Troque depuis ${mois}`;
+}
+
+export default async function TroqueurPage({
+  params,
+}: {
+  params: Promise<{ pseudo: string }>;
+}) {
+  const { pseudo } = await params;
+  const jar = await cookies();
+  const client = createApiClient(process.env.API_INTERNAL_URL ?? "http://localhost:8080", {
+    cookie: jar
+      .getAll()
+      .map((c) => `${c.name}=${c.value}`)
+      .join("; "),
+  });
+  const { data: profile, response } = await client.GET("/troqueurs/{pseudo}", {
+    params: { path: { pseudo: decodeURIComponent(pseudo) } },
+    cache: "no-store",
+  });
+
+  if (!profile || response.status === 404) {
+    return (
+      <main className="mx-auto flex w-full max-w-xl flex-col items-start gap-4 px-6 py-16">
+        <section className="flex flex-col items-start gap-3 rounded-[32px] bg-sable p-6 shadow-sm">
+          <h1 className="font-display text-2xl">Ce troqueur n&apos;existe pas — ou a plié bagage.</h1>
+          <Link
+            href="/"
+            className="inline-flex items-center justify-center rounded-full bg-[#c67139] px-6 py-2.5 font-display text-sm text-creme transition-colors hover:bg-terracotta-600"
+          >
+            Retour à l&apos;accueil
+          </Link>
+        </section>
+      </main>
+    );
+  }
+
+  const viewer = await getCurrentUser();
+  const isOwner = viewer?.pseudo.toLowerCase() === profile.pseudo.toLowerCase();
+  const count = profile.items.length;
+
+  return (
+    <main className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-6 pb-16">
+      {isOwner ? (
+        <p className="flex flex-wrap items-center justify-center gap-2 rounded-full bg-sauge-100 px-5 py-2 text-sm text-sauge-800">
+          C&apos;est ton profil vu par les autres.
+          <Link href="/dressing" className="font-semibold underline">
+            Gérer mon dressing
+          </Link>
+        </p>
+      ) : null}
+
+      <section className="flex items-center gap-4 rounded-[32px] bg-sable p-6 shadow-sm">
+        <AvatarLetter pseudo={profile.pseudo} size="lg" />
+        <div className="flex flex-col gap-1">
+          <h1 className="font-display text-3xl">{profile.pseudo}</h1>
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-neutre-700">
+            {profile.city ? (
+              <span className="inline-flex items-center gap-1">
+                <PinIcon />
+                {profile.city}
+              </span>
+            ) : null}
+            <span>· {ancrage(profile.member_since)}</span>
+          </p>
+          <div>
+            <Tag variant="accent-2">Nouveau troqueur</Tag>
+          </div>
+        </div>
+      </section>
+
+      <div className="flex items-center gap-2">
+        <h2 className="font-display text-xl">Son dressing</h2>
+        <Tag variant="neutral">
+          {count} objet{count > 1 ? "s" : ""}
+        </Tag>
+      </div>
+
+      {count === 0 ? (
+        <section className="flex flex-col gap-2 rounded-[32px] bg-sable p-6 shadow-sm">
+          <h3 className="font-display text-lg">Rien en ligne pour l&apos;instant</h3>
+          <p className="text-sm text-neutre-700">
+            {profile.pseudo} n&apos;a pas encore d&apos;objet à troquer. Repasse voir plus tard !
+          </p>
+        </section>
+      ) : (
+        <ul className="grid grid-cols-2 gap-3.5 sm:grid-cols-3">
+          {profile.items.map((item) => (
+            <li key={item.id} className="flex flex-col overflow-hidden rounded-3xl bg-sable shadow-sm">
+              <div className="aspect-square bg-neutre-100">
+                {item.photos[0] ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={item.photos[0].url}
+                    alt={item.title}
+                    className="size-full object-cover"
+                  />
+                ) : null}
+              </div>
+              <div className="flex flex-col gap-1 p-3">
+                <span className="truncate text-sm font-semibold">{item.title}</span>
+                <div className="flex items-center justify-between gap-2 text-xs text-neutre-700">
+                  <span>{CONDITION_LABELS[item.condition] ?? item.condition}</span>
+                  <span>~{Math.round(item.value_cents / 100)} €</span>
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </main>
+  );
+}
+
+function PinIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0" />
+      <circle cx="12" cy="10" r="3" />
+    </svg>
+  );
+}

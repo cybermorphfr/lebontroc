@@ -19,6 +19,8 @@ const STATUS_LABELS: Record<string, { label: string; variant: "accent" | "accent
 export function DressingGrid({ items }: { items: ItemResponse[] }) {
   const router = useRouter();
   const [selected, setSelected] = useState<ItemResponse | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
 
   async function toggleHidden(item: ItemResponse) {
     await apiFetch(`/items/${item.id}`, {
@@ -37,6 +39,22 @@ export function DressingGrid({ items }: { items: ItemResponse[] }) {
     });
     setSelected(null);
     router.refresh();
+  }
+
+  async function deleteItem(item: ItemResponse) {
+    const response = await apiFetch(`/items/${item.id}`, { method: "DELETE" });
+    setConfirmDelete(false);
+    setSelected(null);
+    if (response.ok) {
+      setToast("Objet supprimé.");
+      setTimeout(() => setToast(null), 4000);
+    }
+    router.refresh();
+  }
+
+  function closeSheet() {
+    setSelected(null);
+    setConfirmDelete(false);
   }
 
   if (items.length === 0) {
@@ -99,12 +117,45 @@ export function DressingGrid({ items }: { items: ItemResponse[] }) {
         Les objets masqués ne sont visibles que par toi.
       </p>
 
+      {toast ? (
+        <p className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-full bg-encre px-5 py-2 text-sm text-creme shadow-lg">
+          {toast}
+        </p>
+      ) : null}
+
       <BottomSheet
         open={selected !== null}
-        onClose={() => setSelected(null)}
-        title={selected?.title}
+        onClose={closeSheet}
+        title={confirmDelete && selected ? `Supprimer ${selected.title} ?` : selected?.title}
       >
-        {selected ? (
+        {selected && confirmDelete ? (
+          <div className="flex flex-col gap-3">
+            <p className="text-sm text-neutre-700">
+              L&apos;objet et ses photos seront supprimés pour de bon. Si tu veux juste faire une
+              pause, masque-le plutôt.
+            </p>
+            <button
+              onClick={() => deleteItem(selected)}
+              className="flex min-h-11 cursor-pointer items-center justify-center rounded-full bg-terracotta-800 px-5 font-display text-sm text-creme"
+            >
+              Supprimer pour de bon
+            </button>
+            {selected.status === "disponible" ? (
+              <button
+                onClick={() => toggleHidden(selected)}
+                className="flex min-h-11 cursor-pointer items-center justify-center rounded-full px-5 text-sm text-terracotta-700 hover:bg-terracotta-500/10"
+              >
+                Masquer plutôt
+              </button>
+            ) : null}
+            <button
+              onClick={() => setConfirmDelete(false)}
+              className="flex min-h-11 cursor-pointer items-center justify-center rounded-full px-5 text-sm text-neutre-700 hover:bg-encre/5"
+            >
+              Annuler
+            </button>
+          </div>
+        ) : selected ? (
           <div className="flex flex-col gap-1">
             <Link
               href={`/publier?objet=${selected.id}`}
@@ -115,9 +166,17 @@ export function DressingGrid({ items }: { items: ItemResponse[] }) {
             {selected.status === "disponible" || selected.status === "masque" ? (
               <button
                 onClick={() => toggleHidden(selected)}
-                className="flex min-h-12 cursor-pointer items-center px-1 text-left text-sm hover:bg-encre/5"
+                className="flex min-h-12 cursor-pointer items-center border-b border-neutre-300/60 px-1 text-left text-sm hover:bg-encre/5"
               >
                 {selected.status === "masque" ? "Remettre en ligne" : "Masquer"}
+              </button>
+            ) : null}
+            {selected.status === "disponible" || selected.status === "masque" ? (
+              <button
+                onClick={() => setConfirmDelete(true)}
+                className="flex min-h-12 cursor-pointer items-center px-1 text-left text-sm text-terracotta-800 hover:bg-terracotta-500/10"
+              >
+                Supprimer
               </button>
             ) : null}
           </div>

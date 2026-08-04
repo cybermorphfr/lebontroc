@@ -25,6 +25,18 @@ pub async fn list_categories(pool: &PgPool) -> sqlx::Result<Vec<Category>> {
         .await
 }
 
+/// Nom de la commune la plus peuplée pour un code postal.
+pub async fn commune_for_postal_code(
+    pool: &PgPool,
+    code_postal: &str,
+) -> sqlx::Result<Option<String>> {
+    let row: Option<(String,)> = sqlx::query_as("SELECT nom FROM communes WHERE code_postal = $1")
+        .bind(code_postal)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.map(|r| r.0))
+}
+
 pub async fn category_exists(pool: &PgPool, id: i16) -> sqlx::Result<bool> {
     let row: Option<(i16,)> = sqlx::query_as("SELECT id FROM categories WHERE id = $1")
         .bind(id)
@@ -116,6 +128,7 @@ pub struct Item {
     pub exchange_wishes: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub deleted_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, FromRow)]
@@ -183,7 +196,7 @@ pub async fn create_item(
 }
 
 pub async fn get_item(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<Item>> {
-    sqlx::query_as::<_, Item>("SELECT * FROM items WHERE id = $1")
+    sqlx::query_as::<_, Item>("SELECT * FROM items WHERE id = $1 AND deleted_at IS NULL")
         .bind(id)
         .fetch_optional(pool)
         .await
@@ -191,11 +204,51 @@ pub async fn get_item(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<Item>> {
 
 pub async fn list_items_by_owner(pool: &PgPool, owner_id: Uuid) -> sqlx::Result<Vec<Item>> {
     sqlx::query_as::<_, Item>(
-        "SELECT * FROM items WHERE owner_id = $1 ORDER BY created_at DESC LIMIT 200",
+        "SELECT * FROM items WHERE owner_id = $1 AND deleted_at IS NULL \
+         ORDER BY created_at DESC LIMIT 200",
     )
     .bind(owner_id)
     .fetch_all(pool)
     .await
+}
+
+/// Objets visibles d'un dressing public : disponibles, non supprimés.
+pub async fn list_public_items_by_owner(pool: &PgPool, owner_id: Uuid) -> sqlx::Result<Vec<Item>> {
+    sqlx::query_as::<_, Item>(
+        "SELECT * FROM items WHERE owner_id = $1 AND status = 'disponible' \
+         AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 200",
+    )
+    .bind(owner_id)
+    .fetch_all(pool)
+    .await
+}
+
+/// Soft delete d'un objet du propriétaire ; purge les lignes photos et
+/// retourne leurs clés S3 (à supprimer du bucket). `None` si introuvable.
+pub async fn soft_delete_item(
+    pool: &PgPool,
+    item_id: Uuid,
+    owner_id: Uuid,
+) -> sqlx::Result<Option<Vec<String>>> {
+    let mut tx = pool.begin().await?;
+    let updated: Option<(Uuid,)> = sqlx::query_as(
+        "UPDATE items SET deleted_at = now() \
+         WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL RETURNING id",
+    )
+    .bind(item_id)
+    .bind(owner_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if updated.is_none() {
+        return Ok(None);
+    }
+    let removed: Vec<(String,)> =
+        sqlx::query_as("DELETE FROM item_photos WHERE item_id = $1 RETURNING s3_key")
+            .bind(item_id)
+            .fetch_all(&mut *tx)
+            .await?;
+    tx.commit().await?;
+    Ok(Some(removed.into_iter().map(|r| r.0).collect()))
 }
 
 pub async fn photos_for_items(pool: &PgPool, item_ids: &[Uuid]) -> sqlx::Result<Vec<ItemPhoto>> {

@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::catalog::dto::{
     CategoryNode, CreateItemRequest, ItemPhotoResponse, ItemResponse, PresignRequest,
-    PresignedPhoto, ReplacePhotosRequest, UpdateItemRequest,
+    PresignedPhoto, PublicProfileResponse, ReplacePhotosRequest, UpdateItemRequest,
 };
 use crate::error::ApiError;
 use crate::extract::CurrentUser;
@@ -380,6 +380,63 @@ pub async fn get_item(
     Ok(Json(item_response(&state, item, photos)))
 }
 
+/// Profil public d'un troqueur : ville approximative, ancienneté, dressing
+/// visible (objets disponibles uniquement — jamais les masqués, Gherkin F1.2).
+#[utoipa::path(
+    get,
+    path = "/troqueurs/{pseudo}",
+    tag = "catalog",
+    params(("pseudo" = String, Path, description = "Pseudo du troqueur")),
+    responses(
+        (status = 200, description = "Profil public", body = PublicProfileResponse),
+        (status = 404, description = "Troqueur inconnu", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn public_profile(
+    State(state): State<AppState>,
+    viewer: Option<CurrentUser>,
+    Path(pseudo): Path<String>,
+) -> Result<Json<PublicProfileResponse>, ApiError> {
+    let owner = infra::auth_repo::find_user_by_pseudo(&state.pool, &pseudo)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Ce troqueur n'existe pas — ou a plié bagage."))?;
+
+    let city =
+        infra::catalog_repo::commune_for_postal_code(&state.pool, &owner.postal_code).await?;
+    let items = infra::catalog_repo::list_public_items_by_owner(&state.pool, owner.id).await?;
+    let ids: Vec<Uuid> = items.iter().map(|i| i.id).collect();
+    let mut photos_by_item: HashMap<Uuid, Vec<infra::catalog_repo::ItemPhoto>> = HashMap::new();
+    for photo in infra::catalog_repo::photos_for_items(&state.pool, &ids).await? {
+        photos_by_item.entry(photo.item_id).or_default().push(photo);
+    }
+
+    telemetry::track(
+        &state,
+        "profile_viewed",
+        viewer.map(|v| v.user_id),
+        json!({
+            "profile_user_id": telemetry::hash_user_id(&state, owner.id),
+            "viewer_is_owner": viewer.map(|v| v.user_id == owner.id).unwrap_or(false),
+            "viewer_logged_in": viewer.is_some(),
+            "items_count": items.len(),
+        }),
+    )
+    .await;
+
+    Ok(Json(PublicProfileResponse {
+        pseudo: owner.pseudo,
+        city,
+        member_since: owner.created_at,
+        items: items
+            .into_iter()
+            .map(|item| {
+                let photos = photos_by_item.remove(&item.id).unwrap_or_default();
+                item_response(&state, item, photos)
+            })
+            .collect(),
+    }))
+}
+
 /// Mon dressing (tous statuts).
 #[utoipa::path(
     get,
@@ -472,23 +529,56 @@ pub async fn update_item(
     .await?
     .ok_or_else(introuvable)?;
 
-    if item.status != existing.status {
-        let event = if item.status == "masque" {
-            "item_hidden"
-        } else {
-            "item_edited"
-        };
-        telemetry::track(
-            &state,
-            event,
-            Some(user.user_id),
-            json!({"item_id": item.id}),
-        )
-        .await;
-    }
+    let event = if item.status != existing.status && item.status == "masque" {
+        "item_hidden"
+    } else {
+        "item_edited"
+    };
+    telemetry::track(
+        &state,
+        event,
+        Some(user.user_id),
+        json!({"item_id": item.id}),
+    )
+    .await;
 
     let photos = infra::catalog_repo::photos_for_items(&state.pool, &[item.id]).await?;
     Ok(Json(item_response(&state, item, photos)))
+}
+
+/// Supprimer un objet (propriétaire uniquement). Les photos sont retirées
+/// du stockage ; l'objet disparaît du dressing et des fiches publiques.
+#[utoipa::path(
+    delete,
+    path = "/items/{id}",
+    tag = "catalog",
+    params(("id" = Uuid, Path, description = "Identifiant de l'objet")),
+    responses(
+        (status = 204, description = "Objet supprimé"),
+        (status = 404, description = "Objet introuvable", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn delete_item(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, ApiError> {
+    let Some(removed_keys) =
+        infra::catalog_repo::soft_delete_item(&state.pool, id, user.user_id).await?
+    else {
+        return Err(ApiError::not_found("Cet objet n'existe pas (ou plus)."));
+    };
+    for key in removed_keys {
+        state.photos.delete_object(&key).await;
+    }
+    telemetry::track(
+        &state,
+        "item_deleted",
+        Some(user.user_id),
+        json!({"item_id": id}),
+    )
+    .await;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Remplace la liste ordonnée des photos (réordonnancement, ajout, retrait).

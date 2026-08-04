@@ -310,6 +310,114 @@ async fn publication_refuse_la_photo_d_autrui(pool: PgPool) {
     assert_eq!(body_json(response).await["error"]["code"], "photo_inconnue");
 }
 
+// ————— Profil public (Gherkin F1.2) —————
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn dressing_public_masque_les_objets_masques(pool: PgPool) {
+    let (app, emails) = app(pool);
+    let cookies = verified_user(&app, &emails, "camille@exemple.fr", "camille").await;
+
+    // 5 objets, dont 1 masqué ensuite.
+    let mut ids = Vec::new();
+    for _ in 0..5 {
+        let photos = presign(&app, &cookies, 1).await;
+        let item = body_json(
+            call(
+                &app,
+                request("POST", "/items", Some(item_body(&photos)), Some(&cookies)),
+            )
+            .await,
+        )
+        .await;
+        ids.push(item["id"].as_str().expect("id").to_string());
+    }
+    let aucune: Vec<String> = Vec::new();
+    let mut update = item_body(&aucune);
+    update.as_object_mut().expect("objet").remove("photos");
+    update["status"] = "masque".into();
+    let response = call(
+        &app,
+        request(
+            "PATCH",
+            &format!("/items/{}", ids[0]),
+            Some(update),
+            Some(&cookies),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Un visiteur anonyme voit 4 objets, jamais le masqué.
+    let profil =
+        body_json(call(&app, request("GET", "/troqueurs/camille", None, None)).await).await;
+    assert_eq!(profil["pseudo"], "camille");
+    assert_eq!(profil["city"], "Nantes"); // 44000 → commune la plus peuplée
+    let visibles = profil["items"].as_array().expect("items");
+    assert_eq!(visibles.len(), 4);
+    assert!(visibles.iter().all(|i| i["id"] != ids[0].as_str()));
+
+    // Pseudo inconnu → 404.
+    let response = call(&app, request("GET", "/troqueurs/fantome", None, None)).await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+// ————— Suppression (F1.2) —————
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn suppression_d_objet(pool: PgPool) {
+    let (app, emails) = app(pool);
+    let cookies = verified_user(&app, &emails, "camille@exemple.fr", "camille").await;
+    let photos = presign(&app, &cookies, 2).await;
+    let item = body_json(
+        call(
+            &app,
+            request("POST", "/items", Some(item_body(&photos)), Some(&cookies)),
+        )
+        .await,
+    )
+    .await;
+    let id = item["id"].as_str().expect("id");
+
+    // Un autre utilisateur ne peut pas supprimer.
+    let cookies_robin = verified_user(&app, &emails, "robin@exemple.fr", "robin").await;
+    let response = call(
+        &app,
+        request(
+            "DELETE",
+            &format!("/items/{id}"),
+            None,
+            Some(&cookies_robin),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    // Le propriétaire supprime.
+    let response = call(
+        &app,
+        request("DELETE", &format!("/items/{id}"), None, Some(&cookies)),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    // Disparu du dressing et de la fiche ; double suppression → 404.
+    let dressing =
+        body_json(call(&app, request("GET", "/me/items", None, Some(&cookies))).await).await;
+    assert_eq!(dressing.as_array().expect("tableau").len(), 0);
+    let response = call(
+        &app,
+        request("GET", &format!("/items/{id}"), None, Some(&cookies)),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let response = call(
+        &app,
+        request("DELETE", &format!("/items/{id}"), None, Some(&cookies)),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
 // ————— Statuts et édition —————
 
 #[sqlx::test(migrations = "../../migrations")]

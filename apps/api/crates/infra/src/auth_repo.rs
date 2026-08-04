@@ -80,6 +80,15 @@ pub async fn find_user_by_id(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<Use
         .await
 }
 
+/// Recherche par pseudo, insensible à la casse (citext).
+pub async fn find_user_by_pseudo(pool: &PgPool, pseudo: &str) -> sqlx::Result<Option<User>> {
+    let sql = format!("SELECT {USER_COLUMNS} FROM users WHERE pseudo = $1");
+    sqlx::query_as::<_, User>(&sql)
+        .bind(pseudo)
+        .fetch_optional(pool)
+        .await
+}
+
 pub async fn update_profile(
     pool: &PgPool,
     user_id: Uuid,

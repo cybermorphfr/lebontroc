@@ -34,6 +34,8 @@ use utoipa::{Modify, OpenApi};
         crate::catalog::handlers::my_items,
         crate::catalog::handlers::update_item,
         crate::catalog::handlers::replace_photos,
+        crate::catalog::handlers::delete_item,
+        crate::catalog::handlers::public_profile,
     ),
     tags(
         (name = "system", description = "Santé et méta de l'API"),

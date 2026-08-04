@@ -15,8 +15,11 @@ pub fn router() -> Router<AppState> {
         .route("/items", post(handlers::create_item))
         .route(
             "/items/{id}",
-            get(handlers::get_item).patch(handlers::update_item),
+            get(handlers::get_item)
+                .patch(handlers::update_item)
+                .delete(handlers::delete_item),
         )
         .route("/items/{id}/photos", put(handlers::replace_photos))
         .route("/me/items", get(handlers::my_items))
+        .route("/troqueurs/{pseudo}", get(handlers::public_profile))
 }

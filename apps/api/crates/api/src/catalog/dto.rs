@@ -92,6 +92,17 @@ pub struct ItemPhotoResponse {
 }
 
 #[derive(Serialize, ToSchema)]
+pub struct PublicProfileResponse {
+    pub pseudo: String,
+    /// Ville approximative (jamais le code postal complet).
+    pub city: Option<String>,
+    /// Date de création du compte (« Troque depuis… »).
+    pub member_since: DateTime<Utc>,
+    /// Objets disponibles uniquement — jamais les masqués.
+    pub items: Vec<ItemResponse>,
+}
+
+#[derive(Serialize, ToSchema)]
 pub struct ItemResponse {
     pub id: Uuid,
     pub owner_id: Uuid,

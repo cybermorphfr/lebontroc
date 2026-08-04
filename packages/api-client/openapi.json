@@ -497,6 +497,40 @@
           }
         }
       },
+      "delete": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Supprimer un objet (propriétaire uniquement). Les photos sont retirées\ndu stockage ; l'objet disparaît du dressing et des fiches publiques.",
+        "operationId": "delete_item",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant de l'objet",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Objet supprimé"
+          },
+          "404": {
+            "description": "Objet introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "catalog"
@@ -719,6 +753,48 @@
                   "items": {
                     "$ref": "#/components/schemas/ItemResponse"
                   }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/troqueurs/{pseudo}": {
+      "get": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Profil public d'un troqueur : ville approximative, ancienneté, dressing\nvisible (objets disponibles uniquement — jamais les masqués, Gherkin F1.2).",
+        "operationId": "public_profile",
+        "parameters": [
+          {
+            "name": "pseudo",
+            "in": "path",
+            "description": "Pseudo du troqueur",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Profil public",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicProfileResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Troqueur inconnu",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -1065,6 +1141,38 @@
           "upload_url": {
             "type": "string",
             "description": "URL de PUT direct vers le stockage (valable 15 min)."
+          }
+        }
+      },
+      "PublicProfileResponse": {
+        "type": "object",
+        "required": [
+          "pseudo",
+          "member_since",
+          "items"
+        ],
+        "properties": {
+          "city": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Ville approximative (jamais le code postal complet)."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ItemResponse"
+            },
+            "description": "Objets disponibles uniquement — jamais les masqués."
+          },
+          "member_since": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Date de création du compte (« Troque depuis… »)."
+          },
+          "pseudo": {
+            "type": "string"
           }
         }
       },

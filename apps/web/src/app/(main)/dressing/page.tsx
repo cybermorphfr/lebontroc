@@ -37,12 +37,20 @@ export default async function DressingPage() {
             {(items ?? []).length} objet{(items ?? []).length > 1 ? "s" : ""}
           </Tag>
         </div>
-        <Link
-          href="/publier"
-          className="rounded-full px-3 py-2 font-display text-sm text-terracotta-700 transition-colors hover:bg-terracotta-500/10"
-        >
-          Publier
-        </Link>
+        <div className="flex items-center gap-1">
+          <Link
+            href={`/troqueur/${encodeURIComponent(user.pseudo)}`}
+            className="rounded-full px-3 py-2 font-display text-sm text-terracotta-700 transition-colors hover:bg-terracotta-500/10"
+          >
+            Voir mon profil public
+          </Link>
+          <Link
+            href="/publier"
+            className="rounded-full px-3 py-2 font-display text-sm text-terracotta-700 transition-colors hover:bg-terracotta-500/10"
+          >
+            Publier
+          </Link>
+        </div>
       </div>
       <DressingGrid items={items ?? []} />
     </main>
