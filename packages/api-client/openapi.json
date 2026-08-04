@@ -4,7 +4,8 @@
     "title": "Lebontroc API",
     "description": "API de la plateforme de troc Lebontroc.",
     "license": {
-      "name": ""
+      "name": "UNLICENSED",
+      "identifier": "UNLICENSED"
     },
     "version": "0.1.0"
   },
@@ -57,10 +58,12 @@
         ],
         "properties": {
           "db": {
-            "$ref": "#/components/schemas/DbStatus"
+            "$ref": "#/components/schemas/DbStatus",
+            "description": "État de la connexion PostgreSQL."
           },
           "status": {
-            "$ref": "#/components/schemas/ApiStatus"
+            "$ref": "#/components/schemas/ApiStatus",
+            "description": "Statut global de l'API."
           },
           "version": {
             "type": "string",
