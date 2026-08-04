@@ -37,6 +37,17 @@ pub async fn commune_for_postal_code(
     Ok(row.map(|r| r.0))
 }
 
+/// Coordonnées (lat, lng) de la commune d'un code postal.
+pub async fn commune_coords_for_postal_code(
+    pool: &PgPool,
+    code_postal: &str,
+) -> sqlx::Result<Option<(f64, f64)>> {
+    sqlx::query_as("SELECT lat, lng FROM communes WHERE code_postal = $1")
+        .bind(code_postal)
+        .fetch_optional(pool)
+        .await
+}
+
 pub async fn category_exists(pool: &PgPool, id: i16) -> sqlx::Result<bool> {
     let row: Option<(i16,)> = sqlx::query_as("SELECT id FROM categories WHERE id = $1")
         .bind(id)
@@ -219,6 +230,62 @@ pub async fn list_public_items_by_owner(pool: &PgPool, owner_id: Uuid) -> sqlx::
          AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 200",
     )
     .bind(owner_id)
+    .fetch_all(pool)
+    .await
+}
+
+// ————— Fil d'accueil —————
+
+#[derive(Debug, Clone, FromRow)]
+pub struct FeedRow {
+    pub id: Uuid,
+    pub owner_id: Uuid,
+    pub title: String,
+    pub condition: String,
+    pub value_cents: i32,
+    pub created_at: DateTime<Utc>,
+    /// Ville approximative du propriétaire (commune du code postal).
+    pub city: Option<String>,
+    /// Distance en km depuis le point de vue (`NULL` si non localisable).
+    pub distance_km: Option<f64>,
+}
+
+/// Fil paginé des objets disponibles, trié par score `distance + récence` :
+/// 25 km « coûtent » un jour d'ancienneté ; un objet non localisable est
+/// traité comme à 800 km. Sans point de vue, seule la récence ordonne.
+pub async fn list_feed_items(
+    pool: &PgPool,
+    viewer: Option<(f64, f64)>,
+    exclude_owner: Option<Uuid>,
+    limit: i64,
+    offset: i64,
+) -> sqlx::Result<Vec<FeedRow>> {
+    let (lat, lng) = (viewer.map(|v| v.0), viewer.map(|v| v.1));
+    sqlx::query_as::<_, FeedRow>(
+        "SELECT t.* FROM ( \
+            SELECT i.id, i.owner_id, i.title, i.condition, i.value_cents, i.created_at, \
+                   c.nom AS city, \
+                   CASE WHEN $1::float8 IS NULL OR c.lat IS NULL THEN NULL \
+                        ELSE 2.0 * 6371.0 * asin(sqrt( \
+                            pow(sin(radians((c.lat - $1) / 2.0)), 2) \
+                            + cos(radians($1)) * cos(radians(c.lat)) \
+                              * pow(sin(radians((c.lng - $2) / 2.0)), 2))) \
+                   END AS distance_km \
+            FROM items i \
+            JOIN users u ON u.id = i.owner_id \
+            LEFT JOIN communes c ON c.code_postal = u.postal_code \
+            WHERE i.status = 'disponible' AND i.deleted_at IS NULL \
+              AND ($3::uuid IS NULL OR i.owner_id <> $3) \
+         ) AS t \
+         ORDER BY COALESCE(t.distance_km, 800.0) / 25.0 \
+                  + EXTRACT(EPOCH FROM (now() - t.created_at)) / 86400.0 \
+         LIMIT $4 OFFSET $5",
+    )
+    .bind(lat)
+    .bind(lng)
+    .bind(exclude_owner)
+    .bind(limit)
+    .bind(offset)
     .fetch_all(pool)
     .await
 }

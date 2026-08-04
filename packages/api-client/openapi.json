@@ -329,6 +329,40 @@
         }
       }
     },
+    "/feed": {
+      "get": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Fil d'accueil : objets disponibles triés par proximité et fraîcheur.\nConnecté, le fil est centré sur la commune du visiteur (ses propres objets\nsont exclus) ; anonyme, seule la récence ordonne.",
+        "operationId": "feed",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "description": "Page (1 par défaut, 24 objets par page)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fil paginé",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "tags": [
@@ -639,6 +673,58 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Objet introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/items/{id}/public": {
+      "get": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Fiche objet complète : objet, encart propriétaire, distance approximative.\nMême règle de visibilité que `GET /items/{id}` : le propriétaire voit tout,\nles autres uniquement `disponible` (404 sinon).",
+        "operationId": "item_public",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant de l'objet",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "description": "Provenance : feed, search, profile, favorites",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fiche objet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemDetailResponse"
                 }
               }
             }
@@ -968,6 +1054,84 @@
           }
         }
       },
+      "FeedCard": {
+        "type": "object",
+        "description": "Carte du fil d'accueil — volontairement légère (grille photo).",
+        "required": [
+          "id",
+          "title",
+          "condition",
+          "value_cents",
+          "created_at"
+        ],
+        "properties": {
+          "city": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Ville approximative du propriétaire (jamais le code postal complet)."
+          },
+          "condition": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "distance_km": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Distance approximative en km — absente pour un visiteur non localisé."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "photo_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Photo de couverture."
+          },
+          "title": {
+            "type": "string"
+          },
+          "value_cents": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "FeedResponse": {
+        "type": "object",
+        "required": [
+          "items",
+          "page",
+          "has_more"
+        ],
+        "properties": {
+          "has_more": {
+            "type": "boolean",
+            "description": "`true` s'il reste des objets à charger (infinite scroll)."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FeedCard"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "HealthResponse": {
         "type": "object",
         "description": "Réponse du endpoint de santé.",
@@ -989,6 +1153,58 @@
             "type": "string",
             "description": "Version du build (crate + SHA court du commit).",
             "example": "0.1.0+abc1234"
+          }
+        }
+      },
+      "ItemDetailResponse": {
+        "type": "object",
+        "description": "Fiche objet complète : objet + encart propriétaire + distance.",
+        "required": [
+          "item",
+          "owner",
+          "is_owner"
+        ],
+        "properties": {
+          "distance_km": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Distance approximative en km depuis le visiteur connecté."
+          },
+          "is_owner": {
+            "type": "boolean"
+          },
+          "item": {
+            "$ref": "#/components/schemas/ItemResponse"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/ItemOwnerResponse"
+          }
+        }
+      },
+      "ItemOwnerResponse": {
+        "type": "object",
+        "description": "Encart propriétaire d'une fiche objet.",
+        "required": [
+          "pseudo",
+          "member_since"
+        ],
+        "properties": {
+          "city": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Ville approximative (jamais d'adresse ni de code postal complet)."
+          },
+          "member_since": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "pseudo": {
+            "type": "string"
           }
         }
       },
@@ -1258,6 +1474,14 @@
           "name"
         ],
         "properties": {
+          "item_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Objet concerné, le cas échéant (ex. `item_gallery_opened`)."
+          },
           "name": {
             "type": "string",
             "description": "Nom d'événement d'interface autorisé (ex. `signup_started`).",

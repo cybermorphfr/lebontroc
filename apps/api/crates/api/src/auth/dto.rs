@@ -29,6 +29,8 @@ pub struct TrackRequest {
     /// Nom d'événement d'interface autorisé (ex. `signup_started`).
     #[schema(example = "signup_started")]
     pub name: String,
+    /// Objet concerné, le cas échéant (ex. `item_gallery_opened`).
+    pub item_id: Option<uuid::Uuid>,
 }
 
 #[derive(Deserialize, ToSchema)]

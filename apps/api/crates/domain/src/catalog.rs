@@ -78,6 +78,18 @@ pub fn transition_statut_autorisee(actuel: &str, demande: &str) -> Result<(), Ca
     }
 }
 
+/// Distance à vol d'oiseau entre deux points (lat, lng) en kilomètres.
+/// Précision suffisante pour « à 3 km » — jamais utilisée pour de la géoloc fine.
+pub fn haversine_km(a: (f64, f64), b: (f64, f64)) -> f64 {
+    const RAYON_TERRE_KM: f64 = 6371.0;
+    let (lat1, lng1) = (a.0.to_radians(), a.1.to_radians());
+    let (lat2, lng2) = (b.0.to_radians(), b.1.to_radians());
+    let dlat = lat2 - lat1;
+    let dlng = lng2 - lng1;
+    let h = (dlat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (dlng / 2.0).sin().powi(2);
+    2.0 * RAYON_TERRE_KM * h.sqrt().asin()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,5 +132,14 @@ mod tests {
         assert!(transition_statut_autorisee("reserve", "disponible").is_err());
         assert!(transition_statut_autorisee("disponible", "troque").is_err());
         assert!(transition_statut_autorisee("reserve", "masque").is_err());
+    }
+
+    #[test]
+    fn haversine_nantes_paris_environ_343_km() {
+        let nantes = (47.2382, -1.5603);
+        let paris = (48.8566, 2.3522);
+        let d = haversine_km(nantes, paris);
+        assert!((330.0..360.0).contains(&d), "distance inattendue : {d}");
+        assert!(haversine_km(nantes, nantes) < 0.001);
     }
 }

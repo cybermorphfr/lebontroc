@@ -1,79 +1,85 @@
-import { createApiClient, type HealthResponse } from "@lebontroc/api-client";
+import Link from "next/link";
+import { cookies } from "next/headers";
+import { createApiClient, type FeedResponse } from "@lebontroc/api-client";
 
-// Le statut est lu à chaque requête, jamais figé au build.
+import { getCurrentUser } from "@/lib/server-api";
+
+import { FeedGrid } from "./FeedGrid";
+
+// Le fil est recalculé à chaque requête (proximité + fraîcheur).
 export const dynamic = "force-dynamic";
 
-async function fetchHealth(): Promise<HealthResponse | null> {
-  // Côté serveur, l'API est jointe en direct sur le réseau interne Docker.
-  const client = createApiClient(
-    process.env.API_INTERNAL_URL ?? "http://localhost:8080",
-  );
+async function fetchFeed(): Promise<FeedResponse | null> {
+  const jar = await cookies();
+  const client = createApiClient(process.env.API_INTERNAL_URL ?? "http://localhost:8080", {
+    cookie: jar
+      .getAll()
+      .map((c) => `${c.name}=${c.value}`)
+      .join("; "),
+  });
   try {
-    const { data } = await client.GET("/health", { cache: "no-store" });
+    const { data } = await client.GET("/feed", { cache: "no-store" });
     return data ?? null;
   } catch {
     return null;
   }
 }
 
-function StatusBadge({ health }: { health: HealthResponse | null }) {
-  if (health === null) {
-    return (
-      <span className="inline-flex items-center gap-2 rounded-full bg-terracotta-100 px-4 py-1.5 text-sm font-semibold text-terracotta-800">
-        <span className="size-2 rounded-full bg-terracotta-500" aria-hidden />
-        API injoignable
-      </span>
-    );
-  }
-  if (health.status === "ok") {
-    return (
-      <span className="inline-flex items-center gap-2 rounded-full bg-sauge-100 px-4 py-1.5 text-sm font-semibold text-sauge-800">
-        <span className="size-2 rounded-full bg-sauge-500" aria-hidden />
-        API opérationnelle
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center gap-2 rounded-full bg-terracotta-100 px-4 py-1.5 text-sm font-semibold text-terracotta-800">
-      <span className="size-2 rounded-full bg-terracotta-500" aria-hidden />
-      API dégradée
-    </span>
-  );
-}
-
 export default async function Home() {
-  const health = await fetchHealth();
+  const [user, feed] = await Promise.all([getCurrentUser(), fetchFeed()]);
 
   return (
-    <main className="flex min-h-screen flex-col items-start justify-center gap-8 px-6 py-16 sm:px-12 lg:px-24">
-      <header className="flex flex-col gap-3">
-        <h1 className="font-display text-5xl sm:text-6xl">Lebontroc</h1>
-        <p className="max-w-md text-lg text-neutre-700">
-          Échange tes objets, sans argent. Ça arrive bientôt.
-        </p>
-      </header>
+    <main className="mx-auto w-full max-w-4xl px-6 pb-16">
+      {user === null ? (
+        <section className="mb-6 flex flex-col items-start gap-3 rounded-[32px] bg-sable p-6 shadow-sm sm:p-8">
+          <h1 className="font-display text-3xl sm:text-4xl">
+            Échange tes objets, sans argent.
+          </h1>
+          <p className="max-w-md text-neutre-700">
+            Publie ce qui dort chez toi, repère ce qui te ferait plaisir près de chez toi, et
+            troque.
+          </p>
+          <Link
+            href="/inscription"
+            className="inline-flex items-center justify-center rounded-full bg-[#c67139] px-6 py-2.5 font-display text-sm text-creme transition-colors hover:bg-terracotta-600"
+          >
+            Je commence à troquer
+          </Link>
+        </section>
+      ) : null}
 
-      <section
-        aria-label="Statut de la plateforme"
-        className="flex w-full max-w-md flex-col gap-4 rounded-[32px] bg-sable p-6 shadow-sm"
-      >
-        <h2 className="font-display text-xl">Statut de la plateforme</h2>
-        <StatusBadge health={health} />
-        <dl className="flex flex-col gap-1 text-sm text-neutre-700">
-          <div className="flex justify-between">
-            <dt>Version du build</dt>
-            <dd className="font-semibold text-encre">
-              {health?.version ?? "—"}
-            </dd>
-          </div>
-          <div className="flex justify-between">
-            <dt>Base de données</dt>
-            <dd className="font-semibold text-encre">
-              {health === null ? "—" : health.db === "ok" ? "ok" : "injoignable"}
-            </dd>
-          </div>
-        </dl>
-      </section>
+      <div className="mb-4 flex items-baseline gap-2">
+        <h2 className="font-display text-2xl">
+          {user ? "Autour de toi" : "Les trouvailles du moment"}
+        </h2>
+        {user ? (
+          <span className="text-sm text-neutre-700">les plus proches et les plus récents</span>
+        ) : null}
+      </div>
+
+      {feed === null ? (
+        <section className="flex flex-col gap-2 rounded-[32px] bg-sable p-6 shadow-sm">
+          <h3 className="font-display text-lg">Le fil fait des siennes</h3>
+          <p className="text-sm text-neutre-700">
+            On n&apos;arrive pas à charger les objets. Recharge la page dans un instant.
+          </p>
+        </section>
+      ) : feed.items.length === 0 ? (
+        <section className="flex flex-col items-start gap-3 rounded-[32px] bg-sable p-6 shadow-sm">
+          <h3 className="font-display text-lg">Rien à troquer pour l&apos;instant</h3>
+          <p className="text-sm text-neutre-700">
+            Sois la première personne à publier un objet — le fil n&apos;attend que toi.
+          </p>
+          <Link
+            href="/publier"
+            className="inline-flex items-center justify-center rounded-full bg-[#c67139] px-6 py-2.5 font-display text-sm text-creme transition-colors hover:bg-terracotta-600"
+          >
+            Publier un objet
+          </Link>
+        </section>
+      ) : (
+        <FeedGrid initial={feed} />
+      )}
     </main>
   );
 }

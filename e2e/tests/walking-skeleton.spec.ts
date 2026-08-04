@@ -2,11 +2,11 @@ import { expect, test } from "@playwright/test";
 
 // F0.1 — Scénario : le squelette est vivant de bout en bout
 // Étant donné l'environnement déployé
-// Quand je visite la page d'accueil
+// Quand je visite la page de santé (le fil occupe l'accueil depuis F2.1)
 // Alors je vois le statut "API opérationnelle" et la version du build
 
 test("le squelette est vivant de bout en bout", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/sante");
 
   await expect(page.getByText("API opérationnelle")).toBeVisible();
   await expect(page.getByText("Version du build")).toBeVisible();
@@ -19,7 +19,7 @@ test("le squelette est vivant de bout en bout", async ({ page }) => {
 });
 
 test("la marque et le titre sont en place", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/sante");
 
   await expect(page).toHaveTitle(/Lebontroc/);
   await expect(

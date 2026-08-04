@@ -11,6 +11,8 @@ use crate::AppState;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/categories", get(handlers::categories))
+        .route("/feed", get(handlers::feed))
+        .route("/items/{id}/public", get(handlers::item_public))
         .route("/items/photos/presign", post(handlers::presign_photos))
         .route("/items", post(handlers::create_item))
         .route(

@@ -102,6 +102,49 @@ pub struct PublicProfileResponse {
     pub items: Vec<ItemResponse>,
 }
 
+/// Carte du fil d'accueil — volontairement légère (grille photo).
+#[derive(Serialize, ToSchema)]
+pub struct FeedCard {
+    pub id: Uuid,
+    pub title: String,
+    pub condition: String,
+    pub value_cents: i32,
+    /// Ville approximative du propriétaire (jamais le code postal complet).
+    pub city: Option<String>,
+    /// Distance approximative en km — absente pour un visiteur non localisé.
+    pub distance_km: Option<f64>,
+    /// Photo de couverture.
+    pub photo_url: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct FeedResponse {
+    pub items: Vec<FeedCard>,
+    pub page: u32,
+    /// `true` s'il reste des objets à charger (infinite scroll).
+    pub has_more: bool,
+}
+
+/// Encart propriétaire d'une fiche objet.
+#[derive(Serialize, ToSchema)]
+pub struct ItemOwnerResponse {
+    pub pseudo: String,
+    /// Ville approximative (jamais d'adresse ni de code postal complet).
+    pub city: Option<String>,
+    pub member_since: DateTime<Utc>,
+}
+
+/// Fiche objet complète : objet + encart propriétaire + distance.
+#[derive(Serialize, ToSchema)]
+pub struct ItemDetailResponse {
+    pub item: ItemResponse,
+    pub owner: ItemOwnerResponse,
+    /// Distance approximative en km depuis le visiteur connecté.
+    pub distance_km: Option<f64>,
+    pub is_owner: bool,
+}
+
 #[derive(Serialize, ToSchema)]
 pub struct ItemResponse {
     pub id: Uuid,

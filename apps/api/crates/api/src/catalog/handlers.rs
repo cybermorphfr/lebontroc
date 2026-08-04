@@ -2,16 +2,18 @@
 
 use std::collections::HashMap;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
 use domain::catalog as regles;
+use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
 use crate::catalog::dto::{
-    CategoryNode, CreateItemRequest, ItemPhotoResponse, ItemResponse, PresignRequest,
-    PresignedPhoto, PublicProfileResponse, ReplacePhotosRequest, UpdateItemRequest,
+    CategoryNode, CreateItemRequest, FeedCard, FeedResponse, ItemDetailResponse, ItemOwnerResponse,
+    ItemPhotoResponse, ItemResponse, PresignRequest, PresignedPhoto, PublicProfileResponse,
+    ReplacePhotosRequest, UpdateItemRequest,
 };
 use crate::error::ApiError;
 use crate::extract::CurrentUser;
@@ -349,6 +351,191 @@ pub async fn create_item(
         StatusCode::CREATED,
         Json(item_response(&state, item, photos)),
     ))
+}
+
+const FEED_PAGE_SIZE: i64 = 24;
+
+/// Point de vue géographique du visiteur connecté (commune de son code postal).
+async fn viewer_coords(
+    state: &AppState,
+    viewer: Option<&CurrentUser>,
+) -> Result<Option<(f64, f64)>, ApiError> {
+    let Some(viewer) = viewer else {
+        return Ok(None);
+    };
+    let Some(user) = infra::auth_repo::find_user_by_id(&state.pool, viewer.user_id).await? else {
+        return Ok(None);
+    };
+    Ok(infra::catalog_repo::commune_coords_for_postal_code(&state.pool, &user.postal_code).await?)
+}
+
+fn arrondi_km(km: f64) -> f64 {
+    (km * 10.0).round() / 10.0
+}
+
+#[derive(Deserialize)]
+pub struct FeedQuery {
+    pub page: Option<u32>,
+}
+
+/// Fil d'accueil : objets disponibles triés par proximité et fraîcheur.
+/// Connecté, le fil est centré sur la commune du visiteur (ses propres objets
+/// sont exclus) ; anonyme, seule la récence ordonne.
+#[utoipa::path(
+    get,
+    path = "/feed",
+    tag = "catalog",
+    params(("page" = Option<u32>, Query, description = "Page (1 par défaut, 24 objets par page)")),
+    responses((status = 200, description = "Fil paginé", body = FeedResponse))
+)]
+pub async fn feed(
+    State(state): State<AppState>,
+    viewer: Option<CurrentUser>,
+    Query(query): Query<FeedQuery>,
+) -> Result<Json<FeedResponse>, ApiError> {
+    let page = query.page.unwrap_or(1).clamp(1, 500);
+    let coords = viewer_coords(&state, viewer.as_ref()).await?;
+
+    // Une ligne de plus que la page pour savoir s'il en reste.
+    let mut rows = infra::catalog_repo::list_feed_items(
+        &state.pool,
+        coords,
+        viewer.as_ref().map(|v| v.user_id),
+        FEED_PAGE_SIZE + 1,
+        (i64::from(page) - 1) * FEED_PAGE_SIZE,
+    )
+    .await?;
+    let has_more = rows.len() as i64 > FEED_PAGE_SIZE;
+    rows.truncate(FEED_PAGE_SIZE as usize);
+
+    let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
+    let mut cover_by_item: HashMap<Uuid, String> = HashMap::new();
+    for photo in infra::catalog_repo::photos_for_items(&state.pool, &ids).await? {
+        cover_by_item
+            .entry(photo.item_id)
+            .or_insert_with(|| state.photos.public_url(&photo.s3_key));
+    }
+
+    telemetry::track(
+        &state,
+        "feed_viewed",
+        viewer.as_ref().map(|v| v.user_id),
+        json!({
+            "page": page,
+            "logged_in": viewer.is_some(),
+            "located": coords.is_some(),
+            "items_count": rows.len(),
+        }),
+    )
+    .await;
+
+    Ok(Json(FeedResponse {
+        items: rows
+            .into_iter()
+            .map(|row| FeedCard {
+                photo_url: cover_by_item.remove(&row.id),
+                id: row.id,
+                title: row.title,
+                condition: row.condition,
+                value_cents: row.value_cents,
+                city: row.city,
+                distance_km: row.distance_km.map(arrondi_km),
+                created_at: row.created_at,
+            })
+            .collect(),
+        page,
+        has_more,
+    }))
+}
+
+#[derive(Deserialize)]
+pub struct ItemPublicQuery {
+    pub source: Option<String>,
+}
+
+/// Fiche objet complète : objet, encart propriétaire, distance approximative.
+/// Même règle de visibilité que `GET /items/{id}` : le propriétaire voit tout,
+/// les autres uniquement `disponible` (404 sinon).
+#[utoipa::path(
+    get,
+    path = "/items/{id}/public",
+    tag = "catalog",
+    params(
+        ("id" = Uuid, Path, description = "Identifiant de l'objet"),
+        ("source" = Option<String>, Query, description = "Provenance : feed, search, profile, favorites")
+    ),
+    responses(
+        (status = 200, description = "Fiche objet", body = ItemDetailResponse),
+        (status = 404, description = "Objet introuvable", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn item_public(
+    State(state): State<AppState>,
+    viewer: Option<CurrentUser>,
+    Path(id): Path<Uuid>,
+    Query(query): Query<ItemPublicQuery>,
+) -> Result<Json<ItemDetailResponse>, ApiError> {
+    let introuvable = || ApiError::not_found("Cet objet n'existe pas (ou plus).");
+    let item = infra::catalog_repo::get_item(&state.pool, id)
+        .await?
+        .ok_or_else(introuvable)?;
+    let is_owner = viewer
+        .as_ref()
+        .map(|v| v.user_id == item.owner_id)
+        .unwrap_or(false);
+    if !is_owner && item.status != "disponible" {
+        return Err(introuvable());
+    }
+
+    let owner = infra::auth_repo::find_user_by_id(&state.pool, item.owner_id)
+        .await?
+        .ok_or_else(introuvable)?;
+    let city =
+        infra::catalog_repo::commune_for_postal_code(&state.pool, &owner.postal_code).await?;
+
+    let distance_km = if is_owner {
+        None
+    } else {
+        let viewer_point = viewer_coords(&state, viewer.as_ref()).await?;
+        let owner_point =
+            infra::catalog_repo::commune_coords_for_postal_code(&state.pool, &owner.postal_code)
+                .await?;
+        match (viewer_point, owner_point) {
+            (Some(a), Some(b)) => Some(arrondi_km(regles::haversine_km(a, b))),
+            _ => None,
+        }
+    };
+
+    let demande = query.source.as_deref().unwrap_or("direct");
+    let source = if ["feed", "search", "profile", "favorites"].contains(&demande) {
+        demande
+    } else {
+        "direct"
+    };
+    telemetry::track(
+        &state,
+        "item_viewed",
+        viewer.as_ref().map(|v| v.user_id),
+        json!({
+            "item_id": item.id,
+            "source": source,
+            "viewer_logged_in": viewer.is_some(),
+            "is_owner": is_owner,
+        }),
+    )
+    .await;
+
+    let photos = infra::catalog_repo::photos_for_items(&state.pool, &[item.id]).await?;
+    Ok(Json(ItemDetailResponse {
+        item: item_response(&state, item, photos),
+        owner: ItemOwnerResponse {
+            pseudo: owner.pseudo,
+            city,
+            member_since: owner.created_at,
+        },
+        distance_km,
+        is_owner,
+    }))
 }
 
 /// Fiche d'un objet. Le propriétaire voit tout ; les autres uniquement

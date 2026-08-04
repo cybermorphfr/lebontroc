@@ -5,16 +5,10 @@ import { createApiClient } from "@lebontroc/api-client";
 
 import { AvatarLetter } from "@/components/AvatarLetter";
 import { Tag } from "@/components/ui/Tag";
+import { ancrage, CONDITION_LABELS } from "@/lib/format";
 import { getCurrentUser } from "@/lib/server-api";
 
 export const dynamic = "force-dynamic";
-
-const CONDITION_LABELS: Record<string, string> = {
-  neuf: "Neuf",
-  tres_bon_etat: "Très bon état",
-  bon_etat: "Bon état",
-  correct: "Correct",
-};
 
 export async function generateMetadata({
   params,
@@ -23,13 +17,6 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { pseudo } = await params;
   return { title: `${decodeURIComponent(pseudo)} — Lebontroc` };
-}
-
-function ancrage(memberSince: string): string {
-  const date = new Date(memberSince);
-  if (Date.now() - date.getTime() < 30 * 24 * 3600 * 1000) return "Vient d'arriver";
-  const mois = new Intl.DateTimeFormat("fr-FR", { month: "long", year: "numeric" }).format(date);
-  return `Troque depuis ${mois}`;
 }
 
 export default async function TroqueurPage({
@@ -117,24 +104,29 @@ export default async function TroqueurPage({
       ) : (
         <ul className="grid grid-cols-2 gap-3.5 sm:grid-cols-3">
           {profile.items.map((item) => (
-            <li key={item.id} className="flex flex-col overflow-hidden rounded-3xl bg-sable shadow-sm">
-              <div className="aspect-square bg-neutre-100">
-                {item.photos[0] ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={item.photos[0].url}
-                    alt={item.title}
-                    className="size-full object-cover"
-                  />
-                ) : null}
-              </div>
-              <div className="flex flex-col gap-1 p-3">
-                <span className="truncate text-sm font-semibold">{item.title}</span>
-                <div className="flex items-center justify-between gap-2 text-xs text-neutre-700">
-                  <span>{CONDITION_LABELS[item.condition] ?? item.condition}</span>
-                  <span>~{Math.round(item.value_cents / 100)} €</span>
+            <li key={item.id}>
+              <Link
+                href={`/objet/${item.id}?source=profile`}
+                className="flex flex-col overflow-hidden rounded-3xl bg-sable shadow-sm transition-shadow hover:shadow-md"
+              >
+                <div className="aspect-square bg-neutre-100">
+                  {item.photos[0] ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={item.photos[0].url}
+                      alt={item.title}
+                      className="size-full object-cover"
+                    />
+                  ) : null}
                 </div>
-              </div>
+                <div className="flex flex-col gap-1 p-3">
+                  <span className="truncate text-sm font-semibold">{item.title}</span>
+                  <div className="flex items-center justify-between gap-2 text-xs text-neutre-700">
+                    <span>{CONDITION_LABELS[item.condition] ?? item.condition}</span>
+                    <span>~{Math.round(item.value_cents / 100)} €</span>
+                  </div>
+                </div>
+              </Link>
             </li>
           ))}
         </ul>

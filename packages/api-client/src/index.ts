@@ -16,6 +16,9 @@ export type ErrorResponse = components["schemas"]["ErrorResponse"];
 export type CategoryNode = components["schemas"]["CategoryNode"];
 export type ItemResponse = components["schemas"]["ItemResponse"];
 export type ItemPhotoResponse = components["schemas"]["ItemPhotoResponse"];
+export type FeedResponse = components["schemas"]["FeedResponse"];
+export type FeedCard = components["schemas"]["FeedCard"];
+export type ItemDetailResponse = components["schemas"]["ItemDetailResponse"];
 
 /**
  * Crée un client typé.
