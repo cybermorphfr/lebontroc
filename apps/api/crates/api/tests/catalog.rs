@@ -1363,3 +1363,251 @@ async fn expiration_notifie_le_proposant(pool: PgPool) {
     // Une seconde passe n'expire rien de plus.
     assert_eq!(api::trade::handlers::expire_and_notify(&state).await, 0);
 }
+
+// ————— Messagerie (F3.2) —————
+
+/// Crée une proposition simple entre deux utilisateurs, retourne son id.
+async fn simple_proposal(app: &Router, offerer: &str, offered: &str, requested: &str) -> String {
+    let response = call(
+        app,
+        request(
+            "POST",
+            "/proposals",
+            Some(serde_json::json!({
+                "offered_item_ids": [offered], "requested_item_ids": [requested], "cash_cents": 0
+            })),
+            Some(offerer),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    body_json(response).await["id"]
+        .as_str()
+        .expect("id")
+        .to_string()
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn les_coordonnees_sont_masquees_avant_acceptation(pool: PgPool) {
+    let (app, emails) = app(pool.clone());
+    let alice = verified_user_at(&app, &emails, "m1@exemple.fr", "malice1", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo à négocier", 15_000).await;
+    let bob = verified_user(&app, &emails, "m2@exemple.fr", "mbob1").await;
+    let jeu = publish_valued(&app, &bob, "Jeu à offrir", 4_000).await;
+    let id = simple_proposal(&app, &bob, &jeu, &velo).await;
+
+    // Gherkin F3.2 : le numéro est masqué avant acceptation.
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/proposals/{id}/messages"),
+            Some(serde_json::json!({"body": "appelle-moi au 06 12 34 56 78"})),
+            Some(&bob),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let json = body_json(response).await;
+    assert_eq!(json["redacted"], true);
+    let body = json["body"].as_str().expect("body");
+    assert!(!body.contains("06 12"), "numéro visible : {body}");
+
+    // Après acceptation (posée en SQL — l'acceptation UI arrive en F3.3),
+    // les coordonnées passent librement.
+    sqlx::query("UPDATE proposals SET status = 'acceptee' WHERE id = $1::uuid")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .expect("acceptation");
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/proposals/{id}/messages"),
+            Some(serde_json::json!({"body": "super, mon numéro : 06 12 34 56 78"})),
+            Some(&alice),
+        ),
+    )
+    .await;
+    let json = body_json(response).await;
+    assert_eq!(json["redacted"], false);
+    assert!(json["body"]
+        .as_str()
+        .expect("body")
+        .contains("06 12 34 56 78"));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn fil_lecture_et_compteur_de_non_lus(pool: PgPool) {
+    let (app, emails) = app(pool);
+    let alice = verified_user_at(&app, &emails, "m3@exemple.fr", "malice2", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo bavard", 15_000).await;
+    let bob = verified_user(&app, &emails, "m4@exemple.fr", "mbob2").await;
+    let jeu = publish_valued(&app, &bob, "Jeu bavard", 4_000).await;
+    let id = simple_proposal(&app, &bob, &jeu, &velo).await;
+
+    for texte in ["Salut !", "Mon jeu contre ton vélo ?"] {
+        let response = call(
+            &app,
+            request(
+                "POST",
+                &format!("/proposals/{id}/messages"),
+                Some(serde_json::json!({"body": texte})),
+                Some(&bob),
+            ),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+
+    // Un tiers n'accède pas au fil.
+    let carole = verified_user(&app, &emails, "m5@exemple.fr", "mcarole").await;
+    let response = call(
+        &app,
+        request(
+            "GET",
+            &format!("/proposals/{id}/messages"),
+            None,
+            Some(&carole),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    // Alice voit 2 non-lus dans sa liste de conversations.
+    let json = body_json(
+        call(
+            &app,
+            request("GET", "/me/conversations", None, Some(&alice)),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(json[0]["unread_count"], 2);
+    assert_eq!(json[0]["last_message"], "Mon jeu contre ton vélo ?");
+    assert_eq!(json[0]["last_is_mine"], false);
+
+    // Elle lit : plus de non-lus, et Bob voit ses messages « lus ».
+    let response = call(
+        &app,
+        request("POST", &format!("/proposals/{id}/read"), None, Some(&alice)),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let json = body_json(
+        call(
+            &app,
+            request("GET", "/me/conversations", None, Some(&alice)),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(json[0]["unread_count"], 0);
+    let json = body_json(
+        call(
+            &app,
+            request(
+                "GET",
+                &format!("/proposals/{id}/messages"),
+                None,
+                Some(&bob),
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert!(json[0]["read_at"].is_string());
+    assert!(json[1]["read_at"].is_string());
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn conversation_fermee_et_message_vide(pool: PgPool) {
+    let (app, emails) = app(pool);
+    let alice = verified_user_at(&app, &emails, "m6@exemple.fr", "malice3", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo fermé", 15_000).await;
+    let bob = verified_user(&app, &emails, "m7@exemple.fr", "mbob3").await;
+    let jeu = publish_valued(&app, &bob, "Jeu fermé", 4_000).await;
+    let id = simple_proposal(&app, &bob, &jeu, &velo).await;
+
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/proposals/{id}/messages"),
+            Some(serde_json::json!({"body": "   "})),
+            Some(&bob),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body_json(response).await["error"]["code"], "message_vide");
+
+    // Refusée → conversation close.
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/proposals/{id}/refuse"),
+            None,
+            Some(&alice),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/proposals/{id}/messages"),
+            Some(serde_json::json!({"body": "trop tard ?"})),
+            Some(&bob),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body_json(response).await["error"]["code"],
+        "conversation_fermee"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn relance_apres_24_heures_sans_lecture(pool: PgPool) {
+    let (state, emails) = api::AppState::for_tests(pool.clone());
+    let app = api::router(state.clone());
+    let alice = verified_user_at(&app, &emails, "m8@exemple.fr", "malice4", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo patient", 15_000).await;
+    let bob = verified_user(&app, &emails, "m9@exemple.fr", "mbob4").await;
+    let jeu = publish_valued(&app, &bob, "Jeu patient", 4_000).await;
+    let id = simple_proposal(&app, &bob, &jeu, &velo).await;
+
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/proposals/{id}/messages"),
+            Some(serde_json::json!({"body": "Toujours partante ?"})),
+            Some(&bob),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    // Trop tôt : pas de relance.
+    assert_eq!(api::messaging::handlers::remind_unread(&state).await, 0);
+
+    // On antidate le message : Alice est relancée, une seule fois.
+    sqlx::query("UPDATE messages SET created_at = now() - interval '25 hours'")
+        .execute(&pool)
+        .await
+        .expect("antidatage");
+    assert_eq!(api::messaging::handlers::remind_unread(&state).await, 1);
+    {
+        let emails = emails.lock().expect("verrou");
+        let dernier = emails.last().expect("e-mail");
+        assert_eq!(dernier.to, "m8@exemple.fr");
+        assert!(dernier.subject.contains("mbob4"));
+    }
+    assert_eq!(api::messaging::handlers::remind_unread(&state).await, 0);
+}

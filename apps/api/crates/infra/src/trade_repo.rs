@@ -109,6 +109,20 @@ pub async fn list_proposals(
     .await
 }
 
+/// Toutes les propositions où l'utilisateur est partie prenante.
+pub async fn list_user_proposals(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Vec<Proposal>> {
+    sqlx::query_as::<_, Proposal>(&format!(
+        "SELECT {PROPOSAL_COLUMNS} FROM proposals p \
+         JOIN users up ON up.id = p.proposer_id \
+         JOIN users ur ON ur.id = p.recipient_id \
+         WHERE p.proposer_id = $1 OR p.recipient_id = $1 \
+         ORDER BY p.created_at DESC LIMIT 100"
+    ))
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+}
+
 /// Les objets (avec titre et photo de couverture) d'un lot de propositions.
 pub async fn proposal_items(
     pool: &PgPool,

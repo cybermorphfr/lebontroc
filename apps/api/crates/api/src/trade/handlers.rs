@@ -45,7 +45,7 @@ fn map_trade_error(error: regles::TradeError) -> ApiError {
 }
 
 /// Assemble les réponses d'un lot de propositions (objets + photos).
-async fn proposal_responses(
+pub(crate) async fn proposal_responses(
     state: &AppState,
     proposals: Vec<infra::trade_repo::Proposal>,
     viewer_id: Uuid,

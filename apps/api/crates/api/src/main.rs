@@ -104,6 +104,10 @@ fn spawn_proposal_expiry(state: AppState) {
             if count > 0 {
                 tracing::info!(count, "propositions expirées");
             }
+            let count = api::messaging::handlers::remind_unread(&state).await;
+            if count > 0 {
+                tracing::info!(count, "relances de messages non lus envoyées");
+            }
         }
     });
 }

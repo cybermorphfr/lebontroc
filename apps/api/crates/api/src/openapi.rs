@@ -48,13 +48,18 @@ use utoipa::{Modify, OpenApi};
         crate::trade::handlers::my_proposals,
         crate::trade::handlers::get_proposal,
         crate::trade::handlers::refuse_proposal,
+        crate::messaging::handlers::list_messages,
+        crate::messaging::handlers::send_message,
+        crate::messaging::handlers::mark_read,
+        crate::messaging::handlers::my_conversations,
     ),
     tags(
         (name = "system", description = "Santé et méta de l'API"),
         (name = "auth", description = "Comptes, sessions et vérification e-mail"),
         (name = "me", description = "Profil de l'utilisateur connecté"),
         (name = "catalog", description = "Catégories, objets et photos"),
-        (name = "trade", description = "Propositions de troc")
+        (name = "trade", description = "Propositions de troc"),
+        (name = "messaging", description = "Conversations et messages")
     ),
     modifiers(&CookieSecurity)
 )]

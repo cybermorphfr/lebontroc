@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { createApiClient, type ProposalResponse } from "@lebontroc/api-client";
+import { createApiClient, type ConversationResponse } from "@lebontroc/api-client";
 
 import { Tag } from "@/components/ui/Tag";
 import { getCurrentUser } from "@/lib/server-api";
@@ -14,14 +14,9 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
-export default async function TrocsPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ box?: string }>;
-}) {
-  const [{ box }, user] = await Promise.all([searchParams, getCurrentUser()]);
+export default async function TrocsPage() {
+  const user = await getCurrentUser();
   if (!user) redirect("/connexion");
-  const envoyees = box === "envoyees";
 
   const jar = await cookies();
   const client = createApiClient(process.env.API_INTERNAL_URL ?? "http://localhost:8080", {
@@ -30,40 +25,19 @@ export default async function TrocsPage({
       .map((c) => `${c.name}=${c.value}`)
       .join("; "),
   });
-  const { data } = await client.GET("/me/proposals", {
-    params: { query: { box: envoyees ? "envoyees" : "recues" } },
-    cache: "no-store",
-  });
-  const proposals = data ?? [];
+  const { data } = await client.GET("/me/conversations", { cache: "no-store" });
+  const conversations = data ?? [];
 
   return (
     <main className="mx-auto w-full max-w-2xl px-6 pb-16">
       <h1 className="mb-4 font-display text-2xl">Mes trocs</h1>
 
-      <div className="mb-5 inline-flex rounded-full border border-neutre-300">
-        <Link
-          href="/trocs"
-          className={`rounded-full px-5 py-1.5 text-sm ${!envoyees ? "bg-[#c67139] text-creme" : "hover:bg-encre/7"}`}
-        >
-          Reçues
-        </Link>
-        <Link
-          href="/trocs?box=envoyees"
-          className={`rounded-full px-5 py-1.5 text-sm ${envoyees ? "bg-[#c67139] text-creme" : "hover:bg-encre/7"}`}
-        >
-          Envoyées
-        </Link>
-      </div>
-
-      {proposals.length === 0 ? (
+      {conversations.length === 0 ? (
         <section className="flex flex-col items-start gap-3 rounded-[32px] bg-sable p-6 shadow-sm">
-          <h2 className="font-display text-lg">
-            {envoyees ? "Aucune proposition envoyée" : "Aucune proposition reçue"}
-          </h2>
+          <h2 className="font-display text-lg">Aucun troc en cours</h2>
           <p className="text-sm text-neutre-700">
-            {envoyees
-              ? "Repère un objet qui te plaît et propose ton premier « ça contre ça »."
-              : "Quand un troqueur voudra un de tes objets, sa proposition arrivera ici."}
+            Repère un objet qui te plaît et propose ton premier « ça contre ça » — les
+            conversations vivront ici.
           </p>
           <Link
             href="/"
@@ -74,8 +48,8 @@ export default async function TrocsPage({
         </section>
       ) : (
         <ul className="flex flex-col gap-3">
-          {proposals.map((proposal) => (
-            <ProposalRow key={proposal.id} proposal={proposal} />
+          {conversations.map((conversation) => (
+            <ConversationRow key={conversation.proposal.id} conversation={conversation} />
           ))}
         </ul>
       )}
@@ -83,7 +57,8 @@ export default async function TrocsPage({
   );
 }
 
-function ProposalRow({ proposal }: { proposal: ProposalResponse }) {
+function ConversationRow({ conversation }: { conversation: ConversationResponse }) {
+  const { proposal } = conversation;
   const statut = STATUS_PROPOSITION[proposal.status] ?? {
     label: proposal.status,
     variant: "neutral" as const,
@@ -95,6 +70,9 @@ function ProposalRow({ proposal }: { proposal: ProposalResponse }) {
     .map((i) => i.photo_url)
     .filter((u): u is string => u != null)
     .slice(0, 4);
+  const apercu = conversation.last_message
+    ? `${conversation.last_is_mine ? "Toi : " : ""}${conversation.last_message}`
+    : `${proposal.offered.length} objet${proposal.offered.length > 1 ? "s" : ""} contre ${proposal.requested.length}${proposal.cash_cents > 0 ? ` + ${Math.round(proposal.cash_cents / 100)} €` : ""}`;
 
   return (
     <li>
@@ -117,12 +95,20 @@ function ProposalRow({ proposal }: { proposal: ProposalResponse }) {
           <span className="truncate text-sm font-semibold">
             {proposal.is_proposer ? `À ${counterpart}` : `De ${counterpart}`}
           </span>
-          <span className="truncate text-xs text-neutre-700">
-            {proposal.offered.length} objet{proposal.offered.length > 1 ? "s" : ""} contre{" "}
-            {proposal.requested.length}
-            {proposal.cash_cents > 0 ? ` + ${Math.round(proposal.cash_cents / 100)} €` : ""}
+          <span
+            className={`truncate text-xs ${conversation.unread_count > 0 ? "font-semibold text-encre" : "text-neutre-700"}`}
+          >
+            {apercu}
           </span>
         </div>
+        {conversation.unread_count > 0 ? (
+          <span
+            aria-label={`${conversation.unread_count} message${conversation.unread_count > 1 ? "s" : ""} non lu${conversation.unread_count > 1 ? "s" : ""}`}
+            className="flex size-6 shrink-0 items-center justify-center rounded-full bg-[#c67139] text-xs font-semibold text-creme"
+          >
+            {conversation.unread_count}
+          </span>
+        ) : null}
         <Tag variant={statut.variant}>{statut.label}</Tag>
       </Link>
     </li>

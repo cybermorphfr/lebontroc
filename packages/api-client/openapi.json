@@ -892,6 +892,30 @@
         }
       }
     },
+    "/me/conversations": {
+      "get": {
+        "tags": [
+          "messaging"
+        ],
+        "summary": "Mes conversations, la plus active d'abord (indicateurs non-lu inclus).",
+        "operationId": "my_conversations",
+        "responses": {
+          "200": {
+            "description": "Mes conversations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ConversationResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/me/favorites": {
       "get": {
         "tags": [
@@ -1121,6 +1145,149 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "Introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/proposals/{id}/messages": {
+      "get": {
+        "tags": [
+          "messaging"
+        ],
+        "summary": "Le fil d'une conversation (participants uniquement).",
+        "operationId": "list_messages",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant de la proposition",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fil de la conversation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MessageResponse"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "messaging"
+        ],
+        "summary": "Envoyer un message (texte et/ou photo). Avant acceptation, les\ncoordonnées (téléphone, e-mail, IBAN) sont masquées — anti-contournement.",
+        "operationId": "send_message",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant de la proposition",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Message envoyé",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Message vide ou conversation fermée",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/proposals/{id}/read": {
+      "post": {
+        "tags": [
+          "messaging"
+        ],
+        "summary": "Accusé de lecture : marque comme lus les messages reçus.",
+        "operationId": "mark_read",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant de la proposition",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Messages marqués lus"
           },
           "404": {
             "description": "Introuvable",
@@ -1385,6 +1552,40 @@
             ],
             "format": "int32",
             "description": "Fourchette indicative en centimes (héritée de la racine)."
+          }
+        }
+      },
+      "ConversationResponse": {
+        "type": "object",
+        "description": "Une conversation = une proposition + son fil.",
+        "required": [
+          "proposal",
+          "last_is_mine",
+          "unread_count"
+        ],
+        "properties": {
+          "last_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_is_mine": {
+            "type": "boolean"
+          },
+          "last_message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "proposal": {
+            "$ref": "#/components/schemas/ProposalResponse"
+          },
+          "unread_count": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -1821,6 +2022,54 @@
           }
         }
       },
+      "MessageResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "proposal_id",
+          "sender_pseudo",
+          "body",
+          "redacted",
+          "created_at"
+        ],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "photo_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "proposal_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "read_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "redacted": {
+            "type": "boolean",
+            "description": "Des coordonnées ont été masquées (message pédagogique côté client)."
+          },
+          "sender_pseudo": {
+            "type": "string"
+          }
+        }
+      },
       "PresignFile": {
         "type": "object",
         "required": [
@@ -2042,6 +2291,26 @@
             "type": "integer",
             "format": "int32",
             "minimum": 0
+          }
+        }
+      },
+      "SendMessageRequest": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Texte du message (2 000 caractères max) — optionnel si photo."
+          },
+          "photo_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Photo présignée (via /items/photos/presign) — optionnelle."
           }
         }
       },
@@ -2297,6 +2566,10 @@
     {
       "name": "trade",
       "description": "Propositions de troc"
+    },
+    {
+      "name": "messaging",
+      "description": "Conversations et messages"
     }
   ]
 }

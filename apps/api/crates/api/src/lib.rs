@@ -7,6 +7,7 @@ pub mod config;
 pub mod error;
 pub mod extract;
 pub mod health;
+pub mod messaging;
 pub mod openapi;
 pub mod telemetry;
 pub mod trade;
@@ -20,6 +21,7 @@ use infra::email::EmailSender;
 use infra::s3::PhotoStore;
 use infra::search::{PgSearchRepository, SearchRepository};
 use sqlx::PgPool;
+use tokio::sync::broadcast;
 use tower::ServiceBuilder;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::trace::TraceLayer;
@@ -37,6 +39,8 @@ pub struct AppState {
     pub photos: PhotoStore,
     /// Recherche derrière un trait : Postgres au MVP, Meilisearch en V2.
     pub search: Arc<dyn SearchRepository>,
+    /// Diffusion temps réel (WebSocket) — broker en mémoire, mono-processus.
+    pub events: broadcast::Sender<messaging::ws::WsEvent>,
 }
 
 impl AppState {
@@ -48,6 +52,7 @@ impl AppState {
         photos: PhotoStore,
     ) -> Self {
         let search = Arc::new(PgSearchRepository::new(pool.clone()));
+        let (events, _) = broadcast::channel(256);
         Self {
             pool,
             version,
@@ -55,6 +60,7 @@ impl AppState {
             mailer,
             photos,
             search,
+            events,
         }
     }
 
@@ -113,6 +119,7 @@ pub fn router(state: AppState) -> Router {
         .merge(auth::router())
         .merge(catalog::router())
         .merge(trade::router())
+        .merge(messaging::router())
         .with_state(state)
         .layer(
             ServiceBuilder::new()

@@ -23,6 +23,8 @@ export type SearchResponse = components["schemas"]["SearchResponse"];
 export type WishlistEntry = components["schemas"]["WishlistEntryDto"];
 export type ProposalResponse = components["schemas"]["ProposalResponse"];
 export type ProposalItemResponse = components["schemas"]["ProposalItemResponse"];
+export type MessageResponse = components["schemas"]["MessageResponse"];
+export type ConversationResponse = components["schemas"]["ConversationResponse"];
 
 /**
  * Crée un client typé.

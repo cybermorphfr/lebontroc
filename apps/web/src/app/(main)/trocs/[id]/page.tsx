@@ -8,6 +8,7 @@ import { Tag } from "@/components/ui/Tag";
 import { getCurrentUser } from "@/lib/server-api";
 import { STATUS_PROPOSITION } from "@/lib/format";
 
+import { Conversation } from "./Conversation";
 import { RefuseButton } from "./RefuseButton";
 
 export const metadata: Metadata = {
@@ -31,10 +32,10 @@ export default async function TrocDetailPage({
       .map((c) => `${c.name}=${c.value}`)
       .join("; "),
   });
-  const { data: proposal } = await client.GET("/proposals/{id}", {
-    params: { path: { id } },
-    cache: "no-store",
-  });
+  const [{ data: proposal }, { data: messages }] = await Promise.all([
+    client.GET("/proposals/{id}", { params: { path: { id } }, cache: "no-store" }),
+    client.GET("/proposals/{id}/messages", { params: { path: { id } }, cache: "no-store" }),
+  ]);
 
   if (!proposal) {
     return (
@@ -101,16 +102,36 @@ export default async function TrocDetailPage({
         </section>
       ) : null}
 
+      {!proposal.is_proposer && ouverte ? (
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <button
+            disabled
+            title="L'acceptation arrive très bientôt (on verrouille tout ça proprement)."
+            className="flex min-h-11 cursor-not-allowed items-center justify-center rounded-full bg-neutre-300 px-6 font-display text-sm text-neutre-700"
+          >
+            Accepter
+          </button>
+          <button
+            disabled
+            title="La contre-proposition arrive très bientôt."
+            className="flex min-h-11 cursor-not-allowed items-center justify-center rounded-full border border-neutre-300 px-6 text-sm text-neutre-700"
+          >
+            Contre-proposer
+          </button>
+          <RefuseButton proposalId={proposal.id} />
+        </div>
+      ) : null}
+
+      <div className="mt-6">
+        <Conversation
+          proposalId={proposal.id}
+          myPseudo={user.pseudo}
+          initialMessages={messages ?? []}
+          closed={!ouverte && proposal.status !== "acceptee"}
+        />
+      </div>
+
       <div className="mt-6 flex flex-col gap-3">
-        {!proposal.is_proposer && ouverte ? (
-          <>
-            <p className="rounded-3xl bg-sable p-4 text-sm text-neutre-700">
-              Accepter, négocier ou discuter arrive très bientôt — en attendant, tu peux déjà
-              refuser si l&apos;échange ne te tente pas.
-            </p>
-            <RefuseButton proposalId={proposal.id} />
-          </>
-        ) : null}
         <Link href="/trocs" className="text-sm text-terracotta-700 hover:underline">
           ← Retour à mes trocs
         </Link>

@@ -15,7 +15,7 @@ infra = { path = "crates/infra" }
 
 # Runtime
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
 axum-extra = { version = "0.10", features = ["cookie"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "request-id"] }
@@ -66,6 +66,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
 async-trait = "0.1"
+regex = "1"
 
 [profile.release]
 strip = "symbols"
