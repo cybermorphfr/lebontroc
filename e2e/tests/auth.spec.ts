@@ -15,7 +15,8 @@ async function signup(page: Page, email: string, pseudo: string) {
   await page.goto("/inscription");
   await page.getByLabel("Pseudo").fill(pseudo);
   await page.getByLabel("E-mail").fill(email);
-  await page.getByLabel("Mot de passe").fill("un-bon-mot-de-passe");
+  // exact : l'œil « Afficher le mot de passe » porte aussi ce libellé.
+  await page.getByLabel("Mot de passe", { exact: true }).fill("un-bon-mot-de-passe");
   await page.getByLabel("Code postal").fill("44000");
   await page.getByRole("button", { name: "Créer mon compte" }).click();
   await expect(page).toHaveURL(/\/verification$/);
