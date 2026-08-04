@@ -326,7 +326,15 @@ pub async fn accept_proposal(
         .execute(&mut *tx)
         .await?;
 
-    // Caducité des propositions concurrentes visant un des objets réservés.
+    tx.commit().await?;
+
+    // Caducité des propositions concurrentes visant un des objets réservés —
+    // APRÈS le commit, hors transaction : une acceptation concurrente tient
+    // sa proposition en FOR UPDATE pendant qu'elle attend un objet, la rendre
+    // caduque depuis la transaction critique créerait un deadlock. Ici la
+    // gagnante ne tient plus aucun verrou ; l'UPDATE attend simplement le
+    // rollback des perdantes. Idempotent et sans danger en cas de crash :
+    // une proposition zombie échouerait proprement à l'acceptation.
     let evictions = sqlx::query_as::<_, Eviction>(
         "WITH victimes AS ( \
             UPDATE proposals SET status = 'caduque', updated_at = now() \
@@ -344,10 +352,9 @@ pub async fn accept_proposal(
     )
     .bind(&item_ids)
     .bind(proposal_id)
-    .fetch_all(&mut *tx)
+    .fetch_all(pool)
     .await?;
 
-    tx.commit().await?;
     Ok(AcceptOutcome::Accepted(trade, evictions))
 }
 

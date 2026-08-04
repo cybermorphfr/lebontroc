@@ -1828,13 +1828,14 @@ async fn contre_proposition_remplace_et_garde_la_conversation(pool: PgPool) {
     .await;
     assert_eq!(json["status"], "contre_proposee");
     assert_eq!(json["superseded_by"], new_id.as_str());
+    // Alice (destinataire de l'ancienne) ne peut plus l'accepter non plus.
     let response = call(
         &app,
         request(
             "POST",
             &format!("/proposals/{old_id}/accept"),
             Some(serde_json::json!({"delivery_mode": "envoi"})),
-            Some(&bob),
+            Some(&alice),
         ),
     )
     .await;
