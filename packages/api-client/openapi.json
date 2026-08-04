@@ -10,6 +10,304 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/analytics/track": {
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Événement d'interface émis par le front (§0.4) — whitelist stricte.",
+        "operationId": "track_event",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Événement enregistré"
+          },
+          "400": {
+            "description": "Événement non autorisé",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Se connecter.",
+        "operationId": "login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Connecté",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Identifiants invalides",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Compte temporairement verrouillé",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Se déconnecter (révoque la session courante, vide les cookies).",
+        "operationId": "logout",
+        "responses": {
+          "204": {
+            "description": "Déconnecté"
+          }
+        }
+      }
+    },
+    "/auth/refresh": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Faire tourner le refresh token (rotation + détection de rejeu).",
+        "operationId": "refresh",
+        "responses": {
+          "204": {
+            "description": "Nouveaux cookies posés"
+          },
+          "401": {
+            "description": "Refresh token absent, expiré ou rejoué",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/resend-verification": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Renvoyer l'e-mail de vérification (cooldown 60 s).",
+        "operationId": "resend_verification",
+        "responses": {
+          "204": {
+            "description": "E-mail renvoyé (ou compte déjà vérifié)"
+          },
+          "429": {
+            "description": "Renvoi trop rapproché",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/sessions": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Lister ses appareils connectés.",
+        "operationId": "list_sessions",
+        "responses": {
+          "200": {
+            "description": "Sessions actives",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SessionResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Déconnecter tous les autres appareils.",
+        "operationId": "revoke_other_sessions",
+        "responses": {
+          "204": {
+            "description": "Autres sessions révoquées"
+          }
+        }
+      }
+    },
+    "/auth/sessions/{id}": {
+      "delete": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Déconnecter un appareil précis.",
+        "operationId": "revoke_session",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant de session",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Session révoquée"
+          },
+          "404": {
+            "description": "Session inconnue",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/signup": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Créer un compte. Connecte immédiatement (cookies posés).",
+        "operationId": "signup",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Compte créé et connecté",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Champ invalide",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "E-mail ou pseudo déjà pris",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/verify-email": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Lien cliqué depuis l'e-mail. Redirige vers le front avec un statut.",
+        "operationId": "verify_email",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "description": "Token du lien e-mail",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "Redirection vers /verification?statut=ok|expire|invalide"
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "tags": [
@@ -24,6 +322,86 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me": {
+      "get": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Son propre profil.",
+        "operationId": "me",
+        "responses": {
+          "200": {
+            "description": "Profil de l'utilisateur connecté",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Non connecté",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Mettre à jour pseudo et code postal.",
+        "operationId": "update_me",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProfileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Profil mis à jour",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Champ invalide",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Pseudo déjà pris",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -48,6 +426,35 @@
           "unreachable"
         ]
       },
+      "ErrorBody": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Code d'erreur stable, destiné au front.",
+            "example": "identifiants_invalides"
+          },
+          "message": {
+            "type": "string",
+            "description": "Message affichable."
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
+          }
+        }
+      },
       "HealthResponse": {
         "type": "object",
         "description": "Réponse du endpoint de santé.",
@@ -71,6 +478,149 @@
             "example": "0.1.0+abc1234"
           }
         }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": [
+          "email",
+          "password"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          }
+        }
+      },
+      "SessionResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "created_at",
+          "last_used_at",
+          "current"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "current": {
+            "type": "boolean",
+            "description": "`true` pour la session qui fait la requête."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "last_used_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "user_agent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "SignupRequest": {
+        "type": "object",
+        "required": [
+          "email",
+          "password",
+          "pseudo",
+          "postal_code"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "example": "camille@exemple.fr"
+          },
+          "password": {
+            "type": "string",
+            "example": "un-bon-mot-de-passe"
+          },
+          "postal_code": {
+            "type": "string",
+            "example": "44000"
+          },
+          "pseudo": {
+            "type": "string",
+            "example": "camille_troc"
+          }
+        }
+      },
+      "TrackRequest": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Nom d'événement d'interface autorisé (ex. `signup_started`).",
+            "example": "signup_started"
+          }
+        }
+      },
+      "UpdateProfileRequest": {
+        "type": "object",
+        "required": [
+          "pseudo",
+          "postal_code"
+        ],
+        "properties": {
+          "postal_code": {
+            "type": "string"
+          },
+          "pseudo": {
+            "type": "string"
+          }
+        }
+      },
+      "UserResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "pseudo",
+          "postal_code",
+          "email_verified",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "email": {
+            "type": "string"
+          },
+          "email_verified": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "postal_code": {
+            "type": "string"
+          },
+          "pseudo": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "cookie_access": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "__Host-lbt_access"
       }
     }
   },
@@ -78,6 +628,14 @@
     {
       "name": "system",
       "description": "Santé et méta de l'API"
+    },
+    {
+      "name": "auth",
+      "description": "Comptes, sessions et vérification e-mail"
+    },
+    {
+      "name": "me",
+      "description": "Profil de l'utilisateur connecté"
     }
   ]
 }

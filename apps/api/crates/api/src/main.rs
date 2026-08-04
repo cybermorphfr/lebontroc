@@ -26,12 +26,15 @@ async fn main() -> anyhow::Result<()> {
         _ => env!("CARGO_PKG_VERSION").to_string(),
     };
 
+    let config = api::config::AppConfig::from_env()?;
+    let mailer = mailer_from_env()?;
+
     // La base peut mettre quelques secondes à accepter les connexions au
     // démarrage de la stack : on retente avant d'abandonner.
     let pool = connect_with_retry(&database_url, 10).await?;
     infra::db::run_migrations(&pool).await?;
 
-    let app = api::router(AppState { pool, version });
+    let app = api::router(AppState::new(pool, version, config, mailer));
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;
     tracing::info!(port, "lebontroc-api démarrée");
@@ -39,6 +42,20 @@ async fn main() -> anyhow::Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())
+}
+
+fn mailer_from_env() -> anyhow::Result<infra::email::EmailSender> {
+    let host = std::env::var("SMTP_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let port: u16 = std::env::var("SMTP_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(1025);
+    let username = std::env::var("SMTP_USERNAME").ok().filter(|v| !v.is_empty());
+    let password = std::env::var("SMTP_PASSWORD").ok().filter(|v| !v.is_empty());
+    let tls = std::env::var("SMTP_TLS").unwrap_or_else(|_| "none".to_string());
+    let from = std::env::var("SMTP_FROM")
+        .unwrap_or_else(|_| "Lebontroc <no-reply@lebontroc.brianplus.com>".to_string());
+    infra::email::EmailSender::smtp(&host, port, username, password, &tls, &from)
 }
 
 async fn connect_with_retry(database_url: &str, attempts: u32) -> anyhow::Result<sqlx::PgPool> {

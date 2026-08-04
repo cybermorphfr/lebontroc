@@ -10,6 +10,9 @@ import createClient from "openapi-fetch";
 import type { components, paths } from "./schema";
 
 export type HealthResponse = components["schemas"]["HealthResponse"];
+export type UserResponse = components["schemas"]["UserResponse"];
+export type SessionResponse = components["schemas"]["SessionResponse"];
+export type ErrorResponse = components["schemas"]["ErrorResponse"];
 
 /**
  * Crée un client typé.
@@ -17,6 +20,6 @@ export type HealthResponse = components["schemas"]["HealthResponse"];
  * @param baseUrl — côté navigateur : `/api` (routé par Traefik) ;
  *                  côté serveur (SSR) : `http://api:8080` (réseau interne).
  */
-export function createApiClient(baseUrl: string) {
-  return createClient<paths>({ baseUrl });
+export function createApiClient(baseUrl: string, headers?: Record<string, string>) {
+  return createClient<paths>({ baseUrl, headers });
 }

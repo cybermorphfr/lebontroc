@@ -1,23 +1,56 @@
 //! Couche HTTP de l'API Lebontroc : routes Axum minces, contrat OpenAPI
 //! généré par utoipa. La logique métier vit dans `domain`, l'IO dans `infra`.
 
+pub mod auth;
+pub mod config;
+pub mod error;
+pub mod extract;
 pub mod health;
 pub mod openapi;
+pub mod telemetry;
+
+use std::sync::Arc;
 
 use axum::http::Request;
 use axum::routing::get;
 use axum::{Json, Router};
+use infra::email::EmailSender;
 use sqlx::PgPool;
 use tower::ServiceBuilder;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
 
+use crate::config::AppConfig;
+
 /// État partagé des handlers.
 #[derive(Clone)]
 pub struct AppState {
     pub pool: PgPool,
     pub version: String,
+    pub config: Arc<AppConfig>,
+    pub mailer: EmailSender,
+}
+
+impl AppState {
+    pub fn new(pool: PgPool, version: String, config: AppConfig, mailer: EmailSender) -> Self {
+        Self { pool, version, config: Arc::new(config), mailer }
+    }
+
+    /// État prêt à l'emploi pour les tests d'intégration : cookies non Secure,
+    /// e-mails capturés en mémoire.
+    pub fn for_tests(
+        pool: PgPool,
+    ) -> (Self, std::sync::Arc<std::sync::Mutex<Vec<infra::email::CapturedEmail>>>) {
+        let (mailer, emails) = EmailSender::capture();
+        let config = AppConfig::new(
+            "secret-de-test-secret-de-test-secret",
+            false,
+            "http://localhost:3000".to_string(),
+            "sel-de-test".to_string(),
+        );
+        (Self::new(pool, "0.1.0+test".to_string(), config, mailer), emails)
+    }
 }
 
 /// Construit le routeur complet de l'API.
@@ -44,6 +77,7 @@ pub fn router(state: AppState) -> Router {
             "/openapi.json",
             get(|| async { Json(openapi::ApiDoc::openapi()) }),
         )
+        .merge(auth::router())
         .with_state(state)
         .layer(
             ServiceBuilder::new()

@@ -9,10 +9,8 @@ use tower::ServiceExt;
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn health_repond_ok_avec_base_disponible(pool: PgPool) {
-    let app = api::router(AppState {
-        pool,
-        version: "0.1.0+test".to_string(),
-    });
+    let (state, _emails) = AppState::for_tests(pool);
+    let app = api::router(state);
 
     let response = app
         .oneshot(
@@ -41,10 +39,8 @@ async fn health_repond_ok_avec_base_disponible(pool: PgPool) {
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn openapi_est_servi(pool: PgPool) {
-    let app = api::router(AppState {
-        pool,
-        version: "0.1.0+test".to_string(),
-    });
+    let (state, _emails) = AppState::for_tests(pool);
+    let app = api::router(state);
 
     let response = app
         .oneshot(

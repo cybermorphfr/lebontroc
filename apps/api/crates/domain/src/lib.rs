@@ -4,4 +4,5 @@
 //! états du troc, acceptation atomique). Pour F0.1, seul le statut de santé
 //! applicatif est modélisé.
 
+pub mod auth;
 pub mod health;
