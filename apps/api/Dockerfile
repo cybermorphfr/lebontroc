@@ -16,7 +16,8 @@ COPY . .
 ENV SQLX_OFFLINE=true
 RUN cargo build --release --bin lebontroc-api
 
-FROM debian:bookworm-slim AS runtime
+# trixie : doit fournir une glibc ≥ celle de l'image cargo-chef (builder).
+FROM debian:trixie-slim AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
