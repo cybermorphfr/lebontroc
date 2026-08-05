@@ -124,14 +124,16 @@ fn spawn_proposal_expiry(state: AppState) {
 }
 
 /// Les paiements ont une date limite courte (30 min quand le payeur accepte
-/// lui-même) : leur maintenance tourne toutes les 10 minutes.
+/// lui-même) et l'auto-confirmation des colis peut finaliser un troc : leur
+/// maintenance tourne toutes les 10 minutes.
 fn spawn_payment_maintenance(state: AppState) {
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(600)).await;
             let (expired, captures) = api::trade::handlers::maintain_payments(&state).await;
-            if expired > 0 || captures > 0 {
-                tracing::info!(expired, captures, "maintenance des paiements");
+            let confirmed = api::trade::handlers::auto_confirm_shipments(&state).await;
+            if expired > 0 || captures > 0 || confirmed > 0 {
+                tracing::info!(expired, captures, confirmed, "maintenance paiements/colis");
             }
         }
     });

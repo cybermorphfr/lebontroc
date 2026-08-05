@@ -2020,32 +2020,8 @@ async fn cash_proposal(
         .to_string()
 }
 
-#[sqlx::test(migrations = "../../migrations")]
-async fn garde_beta_envoi(pool: PgPool) {
-    let (app, emails) = app(pool);
-    let alice = verified_user_at(&app, &emails, "f4@exemple.fr", "falice2", "44300").await;
-    let velo = publish_valued(&app, &alice, "Vélo bêta", 15_000).await;
-    let bob = verified_user(&app, &emails, "f5@exemple.fr", "fbob2").await;
-    let jeu = publish_valued(&app, &bob, "Jeu bêta", 4_000).await;
-    let id = cash_proposal(&app, &bob, &jeu, &velo, 2000, "du_proposant").await;
-
-    // L'envoi n'est pas encore finalisable (F4.3).
-    let response = call(
-        &app,
-        request(
-            "POST",
-            &format!("/proposals/{id}/accept"),
-            Some(serde_json::json!({"delivery_mode": "envoi"})),
-            Some(&alice),
-        ),
-    )
-    .await;
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    assert_eq!(
-        body_json(response).await["error"]["code"],
-        "envoi_indisponible"
-    );
-}
+// (La garde bêta `envoi_indisponible` est tombée avec F4.3 — l'envoi
+// croisé est couvert par les tests dédiés en fin de fichier.)
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn annulation_dun_commun_accord(pool: PgPool) {
@@ -2617,4 +2593,620 @@ async fn soulte_liberee_a_l_annulation_mutuelle(pool: PgPool) {
             .await
             .expect("statuts");
     assert!(statuses.iter().all(|(s,)| s == "disponible"));
+}
+
+// ————— Envoi croisé (F4.3) —————
+
+/// Accepte une proposition en mode envoi et retourne l'id du troc.
+async fn accepted_shipping_trade(app: &Router, recipient: &str, proposal_id: &str) -> String {
+    let response = call(
+        app,
+        request(
+            "POST",
+            &format!("/proposals/{proposal_id}/accept"),
+            Some(serde_json::json!({"delivery_mode": "envoi"})),
+            Some(recipient),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    body_json(response).await["trade"]["id"]
+        .as_str()
+        .expect("trade id")
+        .to_string()
+}
+
+/// Configure « mon envoi » : format donné + premier relais proposé.
+async fn configure_shipping(app: &Router, who: &str, trade: &str, format: &str) {
+    let relays = body_json(
+        call(
+            app,
+            request("GET", &format!("/trades/{trade}/relays"), None, Some(who)),
+        )
+        .await,
+    )
+    .await;
+    let relay_code = relays[0]["code"].as_str().expect("relais").to_string();
+    let response = call(
+        app,
+        request(
+            "POST",
+            &format!("/trades/{trade}/shipping"),
+            Some(serde_json::json!({"format": format, "relay_code": relay_code})),
+            Some(who),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+/// L'id de mon colis à envoyer (`mine`) ou de celui que je reçois.
+async fn shipment_id(app: &Router, who: &str, trade: &str, mine: bool) -> String {
+    let vue = trade_view(app, who, trade).await;
+    vue["shipments"]
+        .as_array()
+        .expect("shipments")
+        .iter()
+        .find(|s| s["i_am_sender"] == mine)
+        .expect("colis")["id"]
+        .as_str()
+        .expect("id")
+        .to_string()
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn envoi_parcours_complet(pool: PgPool) {
+    let (app, emails) = app(pool.clone());
+    let alice = verified_user_at(&app, &emails, "s1@exemple.fr", "salice1", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo expédié", 15_000).await;
+    let bob = verified_user(&app, &emails, "s2@exemple.fr", "sbob1").await;
+    let jeu = publish_valued(&app, &bob, "Jeu expédié", 4_000).await;
+    let proposal = cash_proposal(&app, &bob, &jeu, &velo, 2_000, "du_proposant").await;
+    let trade = accepted_shipping_trade(&app, &alice, &proposal).await;
+
+    // Deux colis, deux paiements : chacun service 2 € + sa soulte éventuelle.
+    let vue_alice = trade_view(&app, &alice, &trade).await;
+    assert_eq!(vue_alice["status"], "attente_paiement");
+    assert!(vue_alice["my_code"].is_null());
+    assert_eq!(vue_alice["shipments"].as_array().expect("colis").len(), 2);
+    assert_eq!(vue_alice["payment"]["i_am_payer"], true);
+    assert_eq!(vue_alice["payment"]["amount_cents"], 200);
+    let vue_bob = trade_view(&app, &bob, &trade).await;
+    assert_eq!(vue_bob["payment"]["amount_cents"], 2_200);
+    // L'autre partie (Bob) a été prévenue de préparer son envoi.
+    {
+        let emails = emails.lock().expect("verrou");
+        assert!(emails.last().expect("e-mail").subject.contains("envoi"));
+    }
+
+    // Payer avant d'avoir choisi le format : refusé.
+    let response = pay(&app, &alice, &trade, "4970 0000 0000 0000").await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body_json(response).await["error"]["code"],
+        "envoi_non_configure"
+    );
+
+    // Alice : format M (6,90 €) → 8,90 € au total. Bob : S → 24,50 €.
+    configure_shipping(&app, &alice, &trade, "m").await;
+    let vue = trade_view(&app, &alice, &trade).await;
+    assert_eq!(vue["payment"]["amount_cents"], 890);
+    assert_eq!(vue["payment"]["shipping_cents"], 690);
+    assert_eq!(vue["payment"]["service_cents"], 200);
+    configure_shipping(&app, &bob, &trade, "s").await;
+    assert_eq!(
+        trade_view(&app, &bob, &trade).await["payment"]["amount_cents"],
+        2_650
+    );
+
+    // Alice paie ; le troc attend encore Bob.
+    assert_eq!(
+        pay(&app, &alice, &trade, "4970 0000 0000 0000")
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    let vue = trade_view(&app, &alice, &trade).await;
+    assert_eq!(vue["status"], "attente_paiement");
+    assert_eq!(vue["payment"]["status"], "sequestre");
+    assert_eq!(vue["other_payment_status"], "en_attente");
+    // Une fois payé, l'envoi n'est plus reconfigurable.
+    let relays = body_json(
+        call(
+            &app,
+            request(
+                "GET",
+                &format!("/trades/{trade}/relays"),
+                None,
+                Some(&alice),
+            ),
+        )
+        .await,
+    )
+    .await;
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/trades/{trade}/shipping"),
+            Some(serde_json::json!({"format": "l",
+                "relay_code": relays[0]["code"].as_str().expect("code")})),
+            Some(&alice),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    // Les codes croisés n'existent pas en mode envoi.
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/trades/{trade}/confirm"),
+            Some(serde_json::json!({"code": "123456"})),
+            Some(&alice),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body_json(response).await["error"]["code"], "mode_envoi");
+
+    // Bob paie : troc actif, étiquettes générées, code de dépôt visible
+    // par l'expéditeur seulement.
+    assert_eq!(
+        pay(&app, &bob, &trade, "4970 0000 0000 0000")
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    let vue = trade_view(&app, &alice, &trade).await;
+    assert_eq!(vue["status"], "accepte");
+    let colis = vue["shipments"].as_array().expect("colis");
+    for c in colis {
+        assert_eq!(c["status"], "etiquette");
+        if c["i_am_sender"] == true {
+            assert!(c["drop_code"].as_str().expect("code").starts_with("LBT"));
+        } else {
+            assert!(c["drop_code"].is_null());
+        }
+    }
+
+    // Bob dépose : le simulateur fait arriver le colis chez Alice.
+    let colis_bob = shipment_id(&app, &bob, &trade, true).await;
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/shipments/{colis_bob}/drop"),
+            None,
+            Some(&bob),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let vue = trade_view(&app, &alice, &trade).await;
+    let entrant = vue["shipments"]
+        .as_array()
+        .expect("colis")
+        .iter()
+        .find(|s| s["i_am_sender"] == false)
+        .expect("entrant");
+    assert_eq!(entrant["status"], "arrive");
+    {
+        let emails = emails.lock().expect("verrou");
+        assert!(emails
+            .last()
+            .expect("e-mail")
+            .subject
+            .contains("point relais"));
+    }
+
+    // Un colis a voyagé : plus d'annulation amiable.
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/trades/{trade}/cancel"),
+            None,
+            Some(&alice),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body_json(response).await["error"]["code"], "colis_en_route");
+
+    // Alice retire puis confirme ; le troc attend l'autre branche.
+    let entrant_alice = shipment_id(&app, &alice, &trade, false).await;
+    for action in ["pickup", "confirm"] {
+        let response = call(
+            &app,
+            request(
+                "POST",
+                &format!("/shipments/{entrant_alice}/{action}"),
+                None,
+                Some(&alice),
+            ),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    assert_eq!(trade_view(&app, &alice, &trade).await["status"], "accepte");
+
+    // Alice expédie à son tour ; Bob réceptionne et confirme → finalisé,
+    // objets troqués, les deux règlements capturés.
+    let colis_alice = shipment_id(&app, &alice, &trade, true).await;
+    call(
+        &app,
+        request(
+            "POST",
+            &format!("/shipments/{colis_alice}/drop"),
+            None,
+            Some(&alice),
+        ),
+    )
+    .await;
+    let entrant_bob = shipment_id(&app, &bob, &trade, false).await;
+    for action in ["pickup", "confirm"] {
+        call(
+            &app,
+            request(
+                "POST",
+                &format!("/shipments/{entrant_bob}/{action}"),
+                None,
+                Some(&bob),
+            ),
+        )
+        .await;
+    }
+    let vue = trade_view(&app, &bob, &trade).await;
+    assert_eq!(vue["status"], "finalise");
+    assert_eq!(vue["payment"]["status"], "capture");
+    let captured: Vec<(String,)> =
+        sqlx::query_as("SELECT status FROM payments WHERE trade_id = $1::uuid")
+            .bind(&trade)
+            .fetch_all(&pool)
+            .await
+            .expect("paiements");
+    assert_eq!(captured.len(), 2);
+    assert!(captured.iter().all(|(s,)| s == "capture"));
+    let statuses: Vec<(String,)> =
+        sqlx::query_as("SELECT status FROM items WHERE id IN ($1::uuid, $2::uuid)")
+            .bind(&velo)
+            .bind(&jeu)
+            .fetch_all(&pool)
+            .await
+            .expect("statuts");
+    assert!(statuses.iter().all(|(s,)| s == "troque"));
+    {
+        let emails = emails.lock().expect("verrou");
+        let subjects: Vec<&str> = emails.iter().map(|e| e.subject.as_str()).collect();
+        assert!(
+            subjects.iter().any(|s| s.contains("ont voyagé")),
+            "finalisation"
+        );
+        assert!(
+            subjects.iter().any(|s| s.contains("transférée")),
+            "soulte à Alice"
+        );
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn envoi_paiement_partiel_expire_et_libere_l_autre(pool: PgPool) {
+    let (state, emails) = AppState::for_tests(pool.clone());
+    let app = api::router(state.clone());
+    let alice = verified_user_at(&app, &emails, "s3@exemple.fr", "salice2", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo abandonné", 15_000).await;
+    let bob = verified_user(&app, &emails, "s4@exemple.fr", "sbob2").await;
+    let jeu = publish_valued(&app, &bob, "Jeu abandonné", 4_000).await;
+    let proposal = simple_proposal(&app, &bob, &jeu, &velo).await;
+    let trade = accepted_shipping_trade(&app, &alice, &proposal).await;
+
+    // Alice configure et paie ; Bob ne fait rien.
+    configure_shipping(&app, &alice, &trade, "s").await;
+    assert_eq!(
+        pay(&app, &alice, &trade, "4970 0000 0000 0000")
+            .await
+            .status(),
+        StatusCode::OK
+    );
+
+    sqlx::query("UPDATE payments SET deadline = now() - interval '1 hour'")
+        .execute(&pool)
+        .await
+        .expect("antidatage");
+    assert_eq!(api::trade::handlers::maintain_payments(&state).await.0, 1);
+
+    let vue = trade_view(&app, &alice, &trade).await;
+    assert_eq!(vue["status"], "annule");
+    // Le paiement d'Alice (séquestré) est libéré, celui de Bob expiré.
+    let statuses: Vec<(String,)> =
+        sqlx::query_as("SELECT status FROM payments WHERE trade_id = $1::uuid ORDER BY status")
+            .bind(&trade)
+            .fetch_all(&pool)
+            .await
+            .expect("paiements");
+    let statuses: Vec<&str> = statuses.iter().map(|(s,)| s.as_str()).collect();
+    assert_eq!(statuses, ["annule", "expire"]);
+    let statuses: Vec<(String,)> =
+        sqlx::query_as("SELECT status FROM shipments WHERE trade_id = $1::uuid")
+            .bind(&trade)
+            .fetch_all(&pool)
+            .await
+            .expect("colis");
+    assert!(statuses.iter().all(|(s,)| s == "annule"));
+    let (velo_status,): (String,) = sqlx::query_as("SELECT status FROM items WHERE id = $1::uuid")
+        .bind(&velo)
+        .fetch_one(&pool)
+        .await
+        .expect("statut");
+    assert_eq!(velo_status, "disponible");
+    {
+        let emails = emails.lock().expect("verrou");
+        let subjects: Vec<&str> = emails.iter().map(|e| e.subject.as_str()).collect();
+        assert!(
+            subjects.iter().any(|s| s.contains("pas débité")),
+            "libération Alice"
+        );
+    }
+}
+
+/// Amène un troc envoi jusqu'à l'état actif (configuré et payé des deux
+/// côtés, étiquettes générées).
+async fn active_shipping_trade(app: &Router, alice: &str, bob: &str, proposal: &str) -> String {
+    let trade = accepted_shipping_trade(app, alice, proposal).await;
+    configure_shipping(app, alice, &trade, "s").await;
+    configure_shipping(app, bob, &trade, "s").await;
+    assert_eq!(
+        pay(app, alice, &trade, "4970 0000 0000 0000")
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        pay(app, bob, &trade, "4970 0000 0000 0000").await.status(),
+        StatusCode::OK
+    );
+    trade
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn envoi_aucun_depot_j5_annule(pool: PgPool) {
+    let (state, emails) = AppState::for_tests(pool.clone());
+    let app = api::router(state.clone());
+    let alice = verified_user_at(&app, &emails, "s5@exemple.fr", "salice3", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo oublié", 15_000).await;
+    let bob = verified_user(&app, &emails, "s6@exemple.fr", "sbob3").await;
+    let jeu = publish_valued(&app, &bob, "Jeu oublié", 4_000).await;
+    let proposal = simple_proposal(&app, &bob, &jeu, &velo).await;
+    let trade = active_shipping_trade(&app, &alice, &bob, &proposal).await;
+
+    sqlx::query("UPDATE trades SET created_at = now() - interval '6 days'")
+        .execute(&pool)
+        .await
+        .expect("antidatage");
+    let report = api::trade::handlers::maintain_trades(&state).await;
+    assert_eq!(report.shipping_cancelled, 1);
+    assert_eq!(report.cancelled, 0, "le J+14 main propre ne s'applique pas");
+
+    let vue = trade_view(&app, &alice, &trade).await;
+    assert_eq!(vue["status"], "annule");
+    let (available,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM items WHERE id IN ($1::uuid, $2::uuid) AND status = 'disponible'",
+    )
+    .bind(&velo)
+    .bind(&jeu)
+    .fetch_one(&pool)
+    .await
+    .expect("objets");
+    assert_eq!(available, 2);
+    {
+        let emails = emails.lock().expect("verrou");
+        assert!(emails.iter().any(|e| e.subject.contains("pas été déposés")));
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn envoi_depot_partiel_j5_gele_le_troc(pool: PgPool) {
+    let (state, emails) = AppState::for_tests(pool.clone());
+    let app = api::router(state.clone());
+    let alice = verified_user_at(&app, &emails, "s7@exemple.fr", "salice4", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo esseulé", 15_000).await;
+    let bob = verified_user(&app, &emails, "s8@exemple.fr", "sbob4").await;
+    let jeu = publish_valued(&app, &bob, "Jeu esseulé", 4_000).await;
+    let proposal = simple_proposal(&app, &bob, &jeu, &velo).await;
+    let trade = active_shipping_trade(&app, &alice, &bob, &proposal).await;
+
+    // Seul Bob dépose son colis.
+    let colis_bob = shipment_id(&app, &bob, &trade, true).await;
+    call(
+        &app,
+        request(
+            "POST",
+            &format!("/shipments/{colis_bob}/drop"),
+            None,
+            Some(&bob),
+        ),
+    )
+    .await;
+
+    sqlx::query("UPDATE trades SET created_at = now() - interval '6 days'")
+        .execute(&pool)
+        .await
+        .expect("antidatage");
+    let report = api::trade::handlers::maintain_trades(&state).await;
+    assert_eq!(report.shipping_frozen, 1);
+
+    let vue = trade_view(&app, &alice, &trade).await;
+    assert_eq!(vue["status"], "litige_gele");
+    // Les préautorisations sont libérées, la défaillance journalisée pour F5.2.
+    let statuses: Vec<(String,)> =
+        sqlx::query_as("SELECT status FROM payments WHERE trade_id = $1::uuid")
+            .bind(&trade)
+            .fetch_all(&pool)
+            .await
+            .expect("paiements");
+    assert!(statuses.iter().all(|(s,)| s == "annule"));
+    let (event_type, culprit): (String, Option<uuid::Uuid>) = sqlx::query_as(
+        "SELECT event_type, culprit_id FROM dispute_events WHERE trade_id = $1::uuid",
+    )
+    .bind(&trade)
+    .fetch_one(&pool)
+    .await
+    .expect("journal");
+    assert_eq!(event_type, "non_depot");
+    assert!(culprit.is_some(), "l'expéditeur défaillant est identifié");
+    {
+        let emails = emails.lock().expect("verrou");
+        let subjects: Vec<&str> = emails.iter().map(|e| e.subject.as_str()).collect();
+        assert!(
+            subjects.iter().any(|s| s.contains("examen manuel")),
+            "admin"
+        );
+        assert!(subjects.iter().any(|s| s.contains("gelé")), "parties");
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn envoi_auto_confirmation_72h_et_rappels(pool: PgPool) {
+    let (state, emails) = AppState::for_tests(pool.clone());
+    let app = api::router(state.clone());
+    let alice = verified_user_at(&app, &emails, "s9@exemple.fr", "salice5", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo silencieux", 15_000).await;
+    let bob = verified_user(&app, &emails, "s10@exemple.fr", "sbob5").await;
+    let jeu = publish_valued(&app, &bob, "Jeu silencieux", 4_000).await;
+    let proposal = simple_proposal(&app, &bob, &jeu, &velo).await;
+    let trade = active_shipping_trade(&app, &alice, &bob, &proposal).await;
+
+    // Rappel de dépôt J+2 : les deux expéditeurs, une seule fois.
+    sqlx::query("UPDATE shipments SET created_at = now() - interval '3 days'")
+        .execute(&pool)
+        .await
+        .expect("antidatage");
+    sqlx::query("UPDATE trades SET created_at = now() - interval '3 days'")
+        .execute(&pool)
+        .await
+        .expect("antidatage");
+    let report = api::trade::handlers::maintain_trades(&state).await;
+    assert_eq!(report.drop_reminders, 2);
+    assert_eq!(
+        api::trade::handlers::maintain_trades(&state)
+            .await
+            .drop_reminders,
+        0
+    );
+
+    // Les deux déposent, retirent — personne ne confirme.
+    for (who, mine) in [(&alice, true), (&bob, true)] {
+        let colis = shipment_id(&app, who, &trade, mine).await;
+        call(
+            &app,
+            request("POST", &format!("/shipments/{colis}/drop"), None, Some(who)),
+        )
+        .await;
+    }
+    for who in [&alice, &bob] {
+        let entrant = shipment_id(&app, who, &trade, false).await;
+        call(
+            &app,
+            request(
+                "POST",
+                &format!("/shipments/{entrant}/pickup"),
+                None,
+                Some(who),
+            ),
+        )
+        .await;
+    }
+
+    // Un troc envoi vieux de 15 jours n'est PAS annulé par le J+14.
+    sqlx::query("UPDATE trades SET created_at = now() - interval '15 days'")
+        .execute(&pool)
+        .await
+        .expect("antidatage");
+    let report = api::trade::handlers::maintain_trades(&state).await;
+    assert_eq!(report.cancelled, 0);
+    assert_eq!(trade_view(&app, &alice, &trade).await["status"], "accepte");
+
+    // 72 h après les retraits : confirmation automatique → finalisé, capturé.
+    sqlx::query("UPDATE shipments SET picked_up_at = now() - interval '73 hours'")
+        .execute(&pool)
+        .await
+        .expect("antidatage");
+    assert_eq!(
+        api::trade::handlers::auto_confirm_shipments(&state).await,
+        2
+    );
+    let vue = trade_view(&app, &alice, &trade).await;
+    assert_eq!(vue["status"], "finalise");
+    assert_eq!(vue["payment"]["status"], "capture");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn envoi_signalement_gele_et_garde_les_fonds(pool: PgPool) {
+    let (app, emails) = app(pool.clone());
+    let alice = verified_user_at(&app, &emails, "s11@exemple.fr", "salice6", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo cabossé", 15_000).await;
+    let bob = verified_user(&app, &emails, "s12@exemple.fr", "sbob6").await;
+    let jeu = publish_valued(&app, &bob, "Jeu cabossé", 4_000).await;
+    let proposal = cash_proposal(&app, &bob, &jeu, &velo, 2_000, "du_proposant").await;
+    let trade = active_shipping_trade(&app, &alice, &bob, &proposal).await;
+
+    // Bob expédie ; Alice retire un colis abîmé et signale.
+    let colis_bob = shipment_id(&app, &bob, &trade, true).await;
+    call(
+        &app,
+        request(
+            "POST",
+            &format!("/shipments/{colis_bob}/drop"),
+            None,
+            Some(&bob),
+        ),
+    )
+    .await;
+    let entrant = shipment_id(&app, &alice, &trade, false).await;
+    call(
+        &app,
+        request(
+            "POST",
+            &format!("/shipments/{entrant}/pickup"),
+            None,
+            Some(&alice),
+        ),
+    )
+    .await;
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/shipments/{entrant}/report"),
+            Some(serde_json::json!({"reason": "Le jeu est arrivé cassé en deux."})),
+            Some(&alice),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let vue = body_json(response).await;
+    assert_eq!(vue["status"], "litige_gele");
+
+    // Les règlements restent séquestrés (ni capturés ni libérés) : la
+    // résolution est manuelle en attendant F5.2.
+    let statuses: Vec<(String,)> =
+        sqlx::query_as("SELECT status FROM payments WHERE trade_id = $1::uuid")
+            .bind(&trade)
+            .fetch_all(&pool)
+            .await
+            .expect("paiements");
+    assert!(statuses.iter().all(|(s,)| s == "sequestre"));
+    let (event_type,): (String,) =
+        sqlx::query_as("SELECT event_type FROM dispute_events WHERE trade_id = $1::uuid")
+            .bind(&trade)
+            .fetch_one(&pool)
+            .await
+            .expect("journal");
+    assert_eq!(event_type, "livraison_signalee");
+    {
+        let emails = emails.lock().expect("verrou");
+        assert!(emails.iter().any(|e| e.subject.contains("examen manuel")));
+    }
 }

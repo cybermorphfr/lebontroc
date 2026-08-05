@@ -404,6 +404,208 @@ impl EmailSender {
         self.send(to, subject, text, html).await
     }
 
+    /// F4.3 — à l'autre partie quand un troc par envoi est accepté : format,
+    /// relais et frais à régler sous 24 h.
+    pub async fn send_shipping_setup(
+        &self,
+        to: &str,
+        pseudo: &str,
+        other_pseudo: &str,
+    ) -> anyhow::Result<()> {
+        let subject = "Ton troc est accepté — prépare ton envoi";
+        let text = format!(
+            "Salut {pseudo},\n\n\
+             Bonne nouvelle : le troc avec {other_pseudo} est accepté, par envoi !\n\n\
+             Sous 24 h : choisis le format de ton colis, le point relais où tu \
+             recevras le sien, et règle les frais d'envoi (bloqués sur ta carte, \
+             débités seulement quand tout est bien arrivé). Sans règlement, le \
+             troc sera annulé.\n\n\
+             https://lebontroc.brianplus.com/trocs\n\n\
+             À très vite,\nL'équipe Lebontroc\n"
+        );
+        let html = format!(
+            r#"<div style="font-family:Figtree,system-ui,sans-serif;background:#f5ead8;color:#201e1d;padding:32px">
+  <div style="max-width:480px;margin:0 auto;background:#ebddc5;border-radius:32px;padding:32px">
+    <p style="font-size:24px;margin:0 0 16px">Lebontroc</p>
+    <p>Salut {pseudo},</p>
+    <p>Bonne nouvelle&nbsp;: le troc avec <strong>{other_pseudo}</strong> est accepté, par envoi&nbsp;!</p>
+    <p>Sous 24&nbsp;h&nbsp;: choisis le format de ton colis, le point relais où tu recevras le sien, et règle les frais d'envoi (bloqués sur ta carte, débités seulement quand tout est bien arrivé). Sans règlement, le troc sera annulé.</p>
+    <p style="text-align:center;margin:24px 0">
+      <a href="https://lebontroc.brianplus.com/trocs" style="background:#c67139;color:#f5ead8;text-decoration:none;padding:12px 28px;border-radius:999px;display:inline-block">Préparer mon envoi</a>
+    </p>
+    <p>À très vite,<br/>L'équipe Lebontroc</p>
+  </div>
+</div>"#
+        );
+        self.send(to, subject, text, html).await
+    }
+
+    /// F4.3 — au destinataire : son colis est arrivé au point relais.
+    pub async fn send_parcel_arrived(
+        &self,
+        to: &str,
+        pseudo: &str,
+        other_pseudo: &str,
+        relay_name: &str,
+    ) -> anyhow::Result<()> {
+        let subject = "Ton colis est arrivé au point relais";
+        let text = format!(
+            "Salut {pseudo},\n\n\
+             Le colis de {other_pseudo} t'attend au relais « {relay_name} ».\n\n\
+             Va le récupérer, puis confirme dans l'app que tout est en ordre — \
+             sans nouvelle de ta part 72 h après le retrait, l'échange sera \
+             considéré comme réussi.\n\n\
+             https://lebontroc.brianplus.com/trocs\n\n\
+             À très vite,\nL'équipe Lebontroc\n"
+        );
+        let html = format!(
+            r#"<div style="font-family:Figtree,system-ui,sans-serif;background:#f5ead8;color:#201e1d;padding:32px">
+  <div style="max-width:480px;margin:0 auto;background:#ebddc5;border-radius:32px;padding:32px">
+    <p style="font-size:24px;margin:0 0 16px">Lebontroc</p>
+    <p>Salut {pseudo},</p>
+    <p>Le colis de <strong>{other_pseudo}</strong> t'attend au relais «&nbsp;{relay_name}&nbsp;».</p>
+    <p>Va le récupérer, puis confirme dans l'app que tout est en ordre — sans nouvelle de ta part 72&nbsp;h après le retrait, l'échange sera considéré comme réussi.</p>
+    <p style="text-align:center;margin:24px 0">
+      <a href="https://lebontroc.brianplus.com/trocs" style="background:#c67139;color:#f5ead8;text-decoration:none;padding:12px 28px;border-radius:999px;display:inline-block">Voir mon troc</a>
+    </p>
+    <p>À très vite,<br/>L'équipe Lebontroc</p>
+  </div>
+</div>"#
+        );
+        self.send(to, subject, text, html).await
+    }
+
+    /// F4.3 — rappel de dépôt J+2 / J+4.
+    pub async fn send_drop_reminder(
+        &self,
+        to: &str,
+        pseudo: &str,
+        other_pseudo: &str,
+        dernier_rappel: bool,
+    ) -> anyhow::Result<()> {
+        let subject = if dernier_rappel {
+            "Dernier rappel : dépose ton colis"
+        } else {
+            "Ton colis attend d'être déposé"
+        };
+        let urgence = if dernier_rappel {
+            "Sans dépôt sous 24 h, le troc sera annulé."
+        } else {
+            "Dépose-le dans un point relais dès que possible."
+        };
+        let text = format!(
+            "Salut {pseudo},\n\n\
+             {other_pseudo} attend ton colis — il n'a pas encore été déposé.\n\
+             {urgence}\n\n\
+             Ton code de dépôt est dans l'app :\n\
+             https://lebontroc.brianplus.com/trocs\n\n\
+             À très vite,\nL'équipe Lebontroc\n"
+        );
+        let html = format!(
+            r#"<div style="font-family:Figtree,system-ui,sans-serif;background:#f5ead8;color:#201e1d;padding:32px">
+  <div style="max-width:480px;margin:0 auto;background:#ebddc5;border-radius:32px;padding:32px">
+    <p style="font-size:24px;margin:0 0 16px">Lebontroc</p>
+    <p>Salut {pseudo},</p>
+    <p><strong>{other_pseudo}</strong> attend ton colis — il n'a pas encore été déposé. {urgence}</p>
+    <p style="text-align:center;margin:24px 0">
+      <a href="https://lebontroc.brianplus.com/trocs" style="background:#c67139;color:#f5ead8;text-decoration:none;padding:12px 28px;border-radius:999px;display:inline-block">Voir mon code de dépôt</a>
+    </p>
+    <p>À très vite,<br/>L'équipe Lebontroc</p>
+  </div>
+</div>"#
+        );
+        self.send(to, subject, text, html).await
+    }
+
+    /// F4.3 — aux deux parties d'un troc envoi qui a échoué.
+    pub async fn send_shipping_failed(
+        &self,
+        to: &str,
+        pseudo: &str,
+        other_pseudo: &str,
+        gele: bool,
+    ) -> anyhow::Result<()> {
+        let subject = if gele {
+            "Votre troc est gelé — nous regardons ce qui s'est passé"
+        } else {
+            "Troc annulé — les colis n'ont pas été déposés"
+        };
+        let corps = if gele {
+            "Un colis a voyagé mais pas l'autre : le troc est gelé le temps \
+             d'examiner la situation. Les préautorisations sont libérées, rien \
+             ne sera débité. Nous revenons vers vous rapidement."
+        } else {
+            "Aucun colis n'a été déposé dans les temps : le troc est annulé, \
+             les objets sont de nouveau disponibles et rien ne sera débité."
+        };
+        let text = format!(
+            "Salut {pseudo},\n\n\
+             À propos de ton troc avec {other_pseudo} : {corps}\n\n\
+             À très vite,\nL'équipe Lebontroc\n"
+        );
+        let html = format!(
+            r#"<div style="font-family:Figtree,system-ui,sans-serif;background:#f5ead8;color:#201e1d;padding:32px">
+  <div style="max-width:480px;margin:0 auto;background:#ebddc5;border-radius:32px;padding:32px">
+    <p style="font-size:24px;margin:0 0 16px">Lebontroc</p>
+    <p>Salut {pseudo},</p>
+    <p>À propos de ton troc avec <strong>{other_pseudo}</strong>&nbsp;: {corps}</p>
+    <p>À très vite,<br/>L'équipe Lebontroc</p>
+  </div>
+</div>"#
+        );
+        self.send(to, subject, text, html).await
+    }
+
+    /// F4.3 — aux deux parties : troc envoi finalisé (souvent asynchrone).
+    pub async fn send_trade_finalized_shipping(
+        &self,
+        to: &str,
+        pseudo: &str,
+        other_pseudo: &str,
+    ) -> anyhow::Result<()> {
+        let subject = "🎉 Troc finalisé — les objets ont voyagé";
+        let text = format!(
+            "Salut {pseudo},\n\n\
+             Les deux colis de ton troc avec {other_pseudo} sont bien arrivés : \
+             le troc est finalisé. Merci d'avoir troqué plutôt qu'acheté !\n\n\
+             À très vite,\nL'équipe Lebontroc\n"
+        );
+        let html = format!(
+            r#"<div style="font-family:Figtree,system-ui,sans-serif;background:#f5ead8;color:#201e1d;padding:32px">
+  <div style="max-width:480px;margin:0 auto;background:#ebddc5;border-radius:32px;padding:32px">
+    <p style="font-size:24px;margin:0 0 16px">Lebontroc</p>
+    <p>Salut {pseudo},</p>
+    <p>Les deux colis de ton troc avec <strong>{other_pseudo}</strong> sont bien arrivés&nbsp;: le troc est finalisé. Merci d'avoir troqué plutôt qu'acheté&nbsp;!</p>
+    <p>À très vite,<br/>L'équipe Lebontroc</p>
+  </div>
+</div>"#
+        );
+        self.send(to, subject, text, html).await
+    }
+
+    /// F4.3 — à l'admin : un troc vient d'être gelé, examen manuel requis.
+    pub async fn send_admin_dispute(
+        &self,
+        to: &str,
+        trade_id: &str,
+        details: &str,
+    ) -> anyhow::Result<()> {
+        let subject = "⚠️ Litige gelé — examen manuel requis";
+        let text = format!(
+            "Un troc vient de passer en litige gelé.\n\n\
+             Troc : {trade_id}\nDétails : {details}\n\n\
+             Résolution manuelle en attendant F5.2 (capture ou libération des \
+             paiements via SQL, voir la doc d'exploitation).\n"
+        );
+        let html = format!(
+            r#"<div style="font-family:monospace;padding:24px">
+  <p><strong>Litige gelé — examen manuel requis</strong></p>
+  <p>Troc : {trade_id}<br/>Détails : {details}</p>
+</div>"#
+        );
+        self.send(to, subject, text, html).await
+    }
+
     /// F4.2 — aux deux parties : troc annulé faute de paiement dans les temps.
     pub async fn send_trade_payment_expired(
         &self,

@@ -63,8 +63,10 @@ export function MeetupPanel({ trade }: { trade: TradeDetailResponse }) {
     }
   }
 
-  const payment = trade.payment;
-  const paymentEuros = payment ? Math.round(payment.amount_cents / 100) : 0;
+  // Seule la part soulte se transfère entre les parties (les frais d'envoi
+  // éventuels vont au transport, pas à l'autre troqueur).
+  const payment = trade.payment && trade.payment.cash_cents > 0 ? trade.payment : undefined;
+  const paymentEuros = payment ? Math.round(payment.cash_cents / 100) : 0;
 
   if (trade.status === "finalise") {
     return (

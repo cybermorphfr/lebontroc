@@ -238,17 +238,18 @@ pub enum AcceptOutcome {
 /// propositions concurrentes. Deux acceptations simultanées visant le même
 /// objet : la seconde attend le verrou, voit `reserve`, échoue proprement.
 ///
-/// Avec soulte (F4.2), `payment` est fourni : le troc naît en
-/// `attente_paiement`, le paiement est créé dans la même transaction, et la
-/// caducité des concurrentes est DIFFÉRÉE au séquestre — tant que la soulte
-/// n'est pas réglée, les autres propositions gardent leur chance.
+/// Avec paiement(s) — soulte (F4.2) ou frais d'envoi (F4.3) — le troc naît
+/// en `attente_paiement`, les paiements sont créés dans la même transaction,
+/// et la caducité des concurrentes est DIFFÉRÉE au dernier séquestre — tant
+/// que tout n'est pas réglé, les autres propositions gardent leur chance.
+/// En mode `envoi`, les deux colis (un par direction) naissent aussi ici.
 pub async fn accept_proposal(
     pool: &PgPool,
     proposal_id: Uuid,
     recipient_id: Uuid,
     delivery_mode: &str,
     codes: (&str, &str), // (code du proposant, code du destinataire)
-    payment: Option<&crate::payment_repo::NewPayment>,
+    payments: &[crate::payment_repo::NewPayment],
 ) -> sqlx::Result<AcceptOutcome> {
     let mut tx = pool.begin().await?;
 
@@ -314,10 +315,10 @@ pub async fn accept_proposal(
         .execute(&mut *tx)
         .await?;
 
-    let status = if payment.is_some() {
-        "attente_paiement"
-    } else {
+    let status = if payments.is_empty() {
         "accepte"
+    } else {
+        "attente_paiement"
     };
     let trade = sqlx::query_as::<_, Trade>(
         "INSERT INTO trades (proposal_id, proposer_id, recipient_id, status, delivery_mode, \
@@ -337,20 +338,39 @@ pub async fn accept_proposal(
     .fetch_one(&mut *tx)
     .await?;
 
-    if let Some(payment) = payment {
+    for payment in payments {
         sqlx::query(
             "INSERT INTO payments (trade_id, payer_id, beneficiary_id, amount_cents, \
-             fees_cents, provider, deadline) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+             fees_cents, service_cents, provider, deadline) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         )
         .bind(trade.id)
         .bind(payment.payer_id)
         .bind(payment.beneficiary_id)
         .bind(payment.amount_cents)
         .bind(payment.fees_cents)
+        .bind(payment.service_cents)
         .bind(&payment.provider)
         .bind(payment.deadline)
         .execute(&mut *tx)
         .await?;
+    }
+
+    // Mode envoi : deux colis, un par direction (F4.3).
+    if delivery_mode == "envoi" {
+        for (sender, recipient) in [
+            (proposal.proposer_id, proposal.recipient_id),
+            (proposal.recipient_id, proposal.proposer_id),
+        ] {
+            sqlx::query(
+                "INSERT INTO shipments (trade_id, sender_id, recipient_id) VALUES ($1, $2, $3)",
+            )
+            .bind(trade.id)
+            .bind(sender)
+            .bind(recipient)
+            .execute(&mut *tx)
+            .await?;
+        }
     }
 
     sqlx::query("UPDATE proposals SET status = 'acceptee', updated_at = now() WHERE id = $1")
@@ -360,11 +380,12 @@ pub async fn accept_proposal(
 
     tx.commit().await?;
 
-    // Sans soulte, les concurrentes deviennent caduques tout de suite. Avec
-    // soulte, ce serait injuste : si le paiement n'arrive jamais, les objets
-    // seront libérés — les autres propositions doivent rester vivantes. La
-    // caducité se joue alors au séquestre (`payment_repo::escrow_payment`).
-    let evictions = if payment.is_none() {
+    // Sans paiement, les concurrentes deviennent caduques tout de suite.
+    // Avec paiement(s), ce serait injuste : si tout n'est jamais réglé, les
+    // objets seront libérés — les autres propositions doivent rester
+    // vivantes. La caducité se joue alors au dernier séquestre
+    // (`payment_repo::escrow_payment`).
+    let evictions = if payments.is_empty() {
         invalidate_competitors(pool, proposal_id, &item_ids).await?
     } else {
         Vec::new()
@@ -621,6 +642,9 @@ pub enum CancelOutcome {
     Cancelled,
     NotFound,
     NotActive(String),
+    /// Mode envoi : au moins un colis est déjà en route — trop tard pour
+    /// une annulation amiable (le signalement prendra le relais).
+    ParcelsMoving,
 }
 
 /// Annulation d'un commun accord : la première partie demande, la seconde
@@ -645,6 +669,17 @@ pub async fn request_cancel(
     }
     if trade.status != "accepte" {
         return Ok(CancelOutcome::NotActive(trade.status));
+    }
+    // Mode envoi : plus d'annulation amiable dès qu'un colis est en route.
+    let (moving,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM shipments WHERE trade_id = $1 \
+         AND status NOT IN ('preparation', 'etiquette', 'annule')",
+    )
+    .bind(trade_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if moving > 0 {
+        return Ok(CancelOutcome::ParcelsMoving);
     }
 
     match trade.cancel_requested_by {
@@ -684,6 +719,14 @@ pub(crate) async fn cancel_trade_in_tx(
     .bind(proposal_id)
     .execute(&mut **tx)
     .await?;
+    // Les colis jamais partis n'ont plus lieu d'être (mode envoi).
+    sqlx::query(
+        "UPDATE shipments SET status = 'annule', updated_at = now() \
+         WHERE trade_id = $1 AND status IN ('preparation', 'etiquette')",
+    )
+    .bind(trade_id)
+    .execute(&mut **tx)
+    .await?;
     Ok(())
 }
 
@@ -718,12 +761,15 @@ pub async fn claim_meetup_reminders(pool: &PgPool) -> sqlx::Result<Vec<TradePart
 }
 
 /// Annulation automatique J+14 (Gherkin « rendez-vous fantôme ») : trocs
-/// acceptés jamais finalisés — annulés, objets libérés, parties notifiées.
+/// MAIN PROPRE acceptés jamais finalisés — annulés, objets libérés, parties
+/// notifiées. Les trocs envoi ont leurs propres échéances (J+5 dépôt,
+/// gel J+21) : un colis en transit ne doit jamais être annulé d'office.
 pub async fn auto_cancel_stale_trades(pool: &PgPool) -> sqlx::Result<Vec<TradeParty>> {
     let mut tx = pool.begin().await?;
     let stale: Vec<(Uuid, Uuid)> = sqlx::query_as(
         "SELECT id, proposal_id FROM trades \
-         WHERE status = 'accepte' AND created_at < now() - interval '14 days' \
+         WHERE status = 'accepte' AND delivery_mode = 'main_propre' \
+           AND created_at < now() - interval '14 days' \
          FOR UPDATE SKIP LOCKED",
     )
     .fetch_all(&mut *tx)

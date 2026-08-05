@@ -13,6 +13,8 @@ pub struct AppConfig {
     pub analytics_salt: String,
     /// Commission plateforme sur les soultes, en basis points (0 en bêta).
     pub payment_fees_bps: u16,
+    /// Destinataire des alertes d'exploitation (litiges gelés).
+    pub admin_email: String,
 }
 
 impl AppConfig {
@@ -29,6 +31,7 @@ impl AppConfig {
             app_base_url,
             analytics_salt,
             payment_fees_bps: 0,
+            admin_email: "admin@lebontroc.brianplus.com".to_string(),
         }
     }
 
@@ -50,6 +53,9 @@ impl AppConfig {
             config.payment_fees_bps = bps
                 .parse()
                 .map_err(|_| anyhow::anyhow!("PAYMENT_FEES_BPS invalide"))?;
+        }
+        if let Ok(admin_email) = std::env::var("ADMIN_EMAIL") {
+            config.admin_email = admin_email;
         }
         Ok(config)
     }

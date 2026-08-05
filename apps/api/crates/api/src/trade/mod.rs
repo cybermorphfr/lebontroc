@@ -20,4 +20,10 @@ pub fn router() -> Router<AppState> {
         .route("/trades/{id}/pay", post(handlers::pay_trade))
         .route("/trades/{id}/confirm", post(handlers::confirm_trade))
         .route("/trades/{id}/cancel", post(handlers::cancel_trade))
+        .route("/trades/{id}/relays", get(handlers::trade_relays))
+        .route("/trades/{id}/shipping", post(handlers::configure_shipping))
+        .route("/shipments/{id}/drop", post(handlers::drop_parcel))
+        .route("/shipments/{id}/pickup", post(handlers::pickup_parcel))
+        .route("/shipments/{id}/confirm", post(handlers::confirm_parcel))
+        .route("/shipments/{id}/report", post(handlers::report_parcel))
 }

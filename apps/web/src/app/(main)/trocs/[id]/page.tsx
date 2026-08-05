@@ -11,6 +11,7 @@ import { STATUS_PROPOSITION } from "@/lib/format";
 import { AcceptButton } from "./AcceptButton";
 import { MeetupPanel } from "./MeetupPanel";
 import { PaymentPanel } from "./PaymentPanel";
+import { ShippingPanel } from "./ShippingPanel";
 import { Conversation } from "./Conversation";
 import { RefuseButton } from "./RefuseButton";
 
@@ -122,8 +123,28 @@ export default async function TrocDetailPage({
         </p>
       ) : null}
 
-      {trade?.status === "attente_paiement" ? <PaymentPanel trade={trade} /> : null}
-      {trade && trade.status !== "attente_paiement" ? <MeetupPanel trade={trade} /> : null}
+      {trade?.delivery_mode === "envoi" ? (
+        <>
+          <ShippingPanel trade={trade} />
+          {trade.status === "attente_paiement" ? (
+            <PaymentPanel
+              trade={trade}
+              shippingConfigured={Boolean(
+                trade.shipments.find((s) => s.i_am_sender)?.format &&
+                  trade.shipments.find((s) => !s.i_am_sender)?.relay_code,
+              )}
+            />
+          ) : null}
+          {trade.status === "finalise" || trade.status === "annule" ? (
+            <MeetupPanel trade={trade} />
+          ) : null}
+        </>
+      ) : (
+        <>
+          {trade?.status === "attente_paiement" ? <PaymentPanel trade={trade} /> : null}
+          {trade && trade.status !== "attente_paiement" ? <MeetupPanel trade={trade} /> : null}
+        </>
+      )}
 
       {proposal.superseded_by ? (
         <p className="mt-4 rounded-3xl bg-terracotta-100/60 p-4 text-sm text-terracotta-800">

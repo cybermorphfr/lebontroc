@@ -12,4 +12,6 @@ pub mod payment;
 pub mod payment_repo;
 pub mod s3;
 pub mod search;
+pub mod shipping;
+pub mod shipping_repo;
 pub mod trade_repo;

@@ -7,6 +7,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use chrono::Duration;
 use domain::payment as paiement;
+use domain::shipping as expedition;
 use domain::trade as regles;
 use serde::Deserialize;
 use serde_json::json;
@@ -17,8 +18,9 @@ use crate::extract::CurrentUser;
 use crate::messaging::ws::broadcast_event;
 use crate::telemetry;
 use crate::trade::dto::{
-    AcceptProposalRequest, ConfirmTradeRequest, CreateProposalRequest, PayTradeRequest,
-    PaymentInfo, ProposalItemResponse, ProposalResponse, TradeDetailResponse, TradeResponse,
+    AcceptProposalRequest, ConfigureShippingRequest, ConfirmTradeRequest, CreateProposalRequest,
+    PayTradeRequest, PaymentInfo, ProposalItemResponse, ProposalResponse, RelayResponse,
+    ReportIssueRequest, ShipmentInfo, TradeDetailResponse, TradeResponse,
 };
 use crate::AppState;
 
@@ -404,33 +406,56 @@ pub async fn accept_proposal(
         .await?
         .filter(|p| p.recipient_id == user.user_id)
         .ok_or_else(|| ApiError::not_found("Cette proposition n'existe pas."))?;
-    // Garde de la bêta fermée : l'envoi croisé arrive en F4.3.
-    if body.delivery_mode == "envoi" {
-        return Err(ApiError::bad_request(
-            "envoi_indisponible",
-            "L'envoi arrive bientôt — pendant la bêta, choisis la remise en main propre.",
-        ));
-    }
-
-    // Avec soulte (F4.2) : le troc naît en attente de paiement — le payeur
-    // préautorise la soulte, séquestrée jusqu'à la remise.
-    let payment = if apercu.cash_cents > 0 {
-        let payer_id = match paiement::payeur(&apercu.cash_direction) {
-            Some(paiement::Payeur::Proposant) => apercu.proposer_id,
-            Some(paiement::Payeur::Destinataire) => apercu.recipient_id,
+    // Qui doit la soulte, le cas échéant.
+    let cash_payer_id = if apercu.cash_cents > 0 {
+        match paiement::payeur(&apercu.cash_direction) {
+            Some(paiement::Payeur::Proposant) => Some(apercu.proposer_id),
+            Some(paiement::Payeur::Destinataire) => Some(apercu.recipient_id),
             None => {
                 return Err(ApiError::internal(
                     "soulte sans direction — donnée corrompue",
                 ));
             }
-        };
+        }
+    } else {
+        None
+    };
+
+    // F4.2/F4.3 : dès qu'il y a de l'argent en jeu (soulte et/ou frais
+    // d'envoi), le troc naît en attente de paiement — préautorisations
+    // séquestrées jusqu'à l'aboutissement.
+    let mut payments: Vec<infra::payment_repo::NewPayment> = Vec::new();
+    if body.delivery_mode == "envoi" {
+        // Chaque partie paie son transport (fixé au choix du format), les
+        // frais de service, et sa soulte éventuelle. 24 h pour les deux.
+        for (payer_id, other_id) in [
+            (apercu.proposer_id, apercu.recipient_id),
+            (apercu.recipient_id, apercu.proposer_id),
+        ] {
+            let cash = if cash_payer_id == Some(payer_id) {
+                apercu.cash_cents
+            } else {
+                0
+            };
+            payments.push(infra::payment_repo::NewPayment {
+                payer_id,
+                beneficiary_id: other_id,
+                amount_cents: expedition::SERVICE_CENTS + cash,
+                fees_cents: paiement::commission_cents(cash, state.config.payment_fees_bps),
+                service_cents: expedition::SERVICE_CENTS,
+                provider: state.payments.name().to_string(),
+                deadline: chrono::Utc::now()
+                    + Duration::minutes(paiement::DELAI_PAIEMENT_AUTRE_MINUTES),
+            });
+        }
+    } else if let Some(payer_id) = cash_payer_id {
         let beneficiary_id = if payer_id == apercu.proposer_id {
             apercu.recipient_id
         } else {
             apercu.proposer_id
         };
         let delai = paiement::delai_paiement_minutes(payer_id == user.user_id);
-        Some(infra::payment_repo::NewPayment {
+        payments.push(infra::payment_repo::NewPayment {
             payer_id,
             beneficiary_id,
             amount_cents: apercu.cash_cents,
@@ -438,12 +463,11 @@ pub async fn accept_proposal(
                 apercu.cash_cents,
                 state.config.payment_fees_bps,
             ),
+            service_cents: 0,
             provider: state.payments.name().to_string(),
             deadline: chrono::Utc::now() + Duration::minutes(delai),
-        })
-    } else {
-        None
-    };
+        });
+    }
 
     // Codes de confirmation du rendez-vous, générés à l'acceptation.
     let code = || {
@@ -459,7 +483,7 @@ pub async fn accept_proposal(
         user.user_id,
         &body.delivery_mode,
         (&codes.0, &codes.1),
-        payment.as_ref(),
+        &payments,
     )
     .await?;
     let trade = match outcome {
@@ -515,35 +539,55 @@ pub async fn accept_proposal(
             .await;
             notify_evictions(&state, evictions).await;
 
-            // Avec soulte : prévenir le payeur s'il n'est pas devant l'écran.
-            if let Some(payment) = &payment {
-                if payment.payer_id != user.user_id {
-                    match infra::auth_repo::find_user_by_id(&state.pool, payment.payer_id).await {
-                        Ok(Some(payer)) => {
-                            let other = if payment.payer_id == apercu.proposer_id {
-                                &apercu.recipient_pseudo
-                            } else {
-                                &apercu.proposer_pseudo
-                            };
-                            if let Err(error) = state
+            // L'autre partie n'est pas devant l'écran : la prévenir qu'un
+            // règlement l'attend (soulte en main propre, envoi à préparer).
+            let other_id = if apercu.proposer_id == user.user_id {
+                apercu.recipient_id
+            } else {
+                apercu.proposer_id
+            };
+            let other_must_act =
+                body.delivery_mode == "envoi" || payments.iter().any(|p| p.payer_id == other_id);
+            if other_must_act {
+                match infra::auth_repo::find_user_by_id(&state.pool, other_id).await {
+                    Ok(Some(other)) => {
+                        let my_pseudo = if apercu.proposer_id == user.user_id {
+                            &apercu.proposer_pseudo
+                        } else {
+                            &apercu.recipient_pseudo
+                        };
+                        let sent = if body.delivery_mode == "envoi" {
+                            state
+                                .mailer
+                                .send_shipping_setup(&other.email, &other.pseudo, my_pseudo)
+                                .await
+                        } else {
+                            let amount = payments
+                                .iter()
+                                .find(|p| p.payer_id == other_id)
+                                .map(|p| p.amount_cents)
+                                .unwrap_or(0);
+                            state
                                 .mailer
                                 .send_payment_due(
-                                    &payer.email,
-                                    &payer.pseudo,
-                                    other,
-                                    payment.amount_cents,
+                                    &other.email,
+                                    &other.pseudo,
+                                    my_pseudo,
+                                    amount,
                                     paiement::DELAI_PAIEMENT_AUTRE_MINUTES / 60,
                                 )
                                 .await
-                            {
-                                tracing::error!(%error, trade_id = %trade.id,
-                                    "e-mail de soulte à régler en échec");
-                            }
+                        };
+                        if let Err(error) = sent {
+                            tracing::error!(%error, trade_id = %trade.id,
+                                "e-mail de règlement à effectuer en échec");
                         }
-                        Ok(None) => {}
-                        Err(error) => tracing::error!(%error, "payeur introuvable"),
                     }
+                    Ok(None) => {}
+                    Err(error) => tracing::error!(%error, "autre partie introuvable"),
                 }
+            }
+            if !payments.is_empty() {
                 broadcast_event(
                     &state,
                     [apercu.proposer_id, apercu.recipient_id],
@@ -690,24 +734,68 @@ pub async fn counter_proposal(
 
 // ————— Remise en main propre (F4.1) —————
 
-fn trade_detail_response(
-    trade: infra::trade_repo::TradeDetail,
-    payment: Option<&infra::payment_repo::Payment>,
-    user_id: Uuid,
-) -> TradeDetailResponse {
-    let is_proposer = trade.proposer_id == user_id;
-    let payment_info = payment.map(|p| PaymentInfo {
+fn payment_info(p: &infra::payment_repo::Payment, user_id: Uuid) -> PaymentInfo {
+    PaymentInfo {
         status: p.status.clone(),
         amount_cents: p.amount_cents,
+        shipping_cents: p.shipping_cents,
+        service_cents: p.service_cents,
+        cash_cents: p.cash_cents(),
         fees_cents: p.fees_cents,
-        net_cents: paiement::net_beneficiaire_cents(p.amount_cents, p.fees_cents),
+        net_cents: paiement::net_beneficiaire_cents(p.cash_cents(), p.fees_cents),
         i_am_payer: p.payer_id == user_id,
         deadline: p.deadline,
         failure_reason: p.failure_reason.clone(),
         secure_mode_url: None,
-    });
-    // Le code de remise n'a pas cours tant que la soulte n'est pas séquestrée.
-    let code_active = trade.status != "attente_paiement";
+    }
+}
+
+fn trade_detail_response(
+    trade: infra::trade_repo::TradeDetail,
+    payments: &[infra::payment_repo::Payment],
+    shipments: &[infra::shipping_repo::Shipment],
+    user_id: Uuid,
+) -> TradeDetailResponse {
+    let is_proposer = trade.proposer_id == user_id;
+    // MON paiement d'abord (mode envoi : chacun le sien) ; à défaut celui
+    // de l'autre (main propre avec soulte, vue du bénéficiaire).
+    let mine = payments.iter().find(|p| p.payer_id == user_id);
+    let shown = mine.or_else(|| payments.first());
+    let other_payment_status = payments
+        .iter()
+        .find(|p| p.payer_id != user_id)
+        .filter(|_| mine.is_some())
+        .map(|p| p.status.clone());
+    let shipment_infos = shipments
+        .iter()
+        .map(|s| {
+            let i_am_sender = s.sender_id == user_id;
+            ShipmentInfo {
+                id: s.id,
+                i_am_sender,
+                status: s.status.clone(),
+                format: s.format.clone(),
+                relay_code: s.relay_code.clone(),
+                relay_name: s.relay_name.clone(),
+                relay_address: s.relay_address.clone(),
+                drop_code: if i_am_sender {
+                    s.drop_code.clone()
+                } else {
+                    None
+                },
+                dropped_at: s.dropped_at,
+                arrived_at: s.arrived_at,
+                picked_up_at: s.picked_up_at,
+                confirmed_at: s.confirmed_at,
+                confirmation_deadline: s
+                    .picked_up_at
+                    .map(|t| t + Duration::hours(expedition::CONFIRMATION_HEURES)),
+                issue_reason: s.issue_reason.clone(),
+            }
+        })
+        .collect();
+    // Le code de remise (main propre) n'a pas cours avant séquestre.
+    let code_active = trade.status != "attente_paiement" && trade.delivery_mode == "main_propre";
     TradeDetailResponse {
         id: trade.id,
         proposal_id: trade.proposal_id,
@@ -738,18 +826,25 @@ fn trade_detail_response(
             .map(|by| by != user_id)
             .unwrap_or(false),
         accepted_at: trade.created_at,
-        payment: payment_info,
+        payment: shown.map(|p| payment_info(p, user_id)),
+        other_payment_status,
+        shipments: shipment_infos,
     }
 }
 
-/// Vue complète du troc, paiement compris.
+/// Vue complète du troc : paiements et colis compris.
 async fn full_trade_response(
     state: &AppState,
     trade: infra::trade_repo::TradeDetail,
     user_id: Uuid,
 ) -> Result<TradeDetailResponse, ApiError> {
-    let payment = infra::payment_repo::payment_for_trade(&state.pool, trade.id).await?;
-    Ok(trade_detail_response(trade, payment.as_ref(), user_id))
+    let payments = infra::payment_repo::payments_for_trade(&state.pool, trade.id).await?;
+    let shipments = if trade.delivery_mode == "envoi" {
+        infra::shipping_repo::shipments_for_trade(&state.pool, trade.id).await?
+    } else {
+        Vec::new()
+    };
+    Ok(trade_detail_response(trade, &payments, &shipments, user_id))
 }
 
 async fn participant_trade(
@@ -790,19 +885,27 @@ pub async fn get_trade(
     ))
 }
 
-/// Annule le troc si son paiement a dépassé la date limite : paiement
-/// `expire`, troc `annule`, objets libérés, parties notifiées. Retourne
-/// `true` si l'annulation vient d'avoir lieu.
+/// Annule le troc si un de ses paiements a dépassé la date limite :
+/// paiements en retard `expire`, préautorisations déjà posées libérées,
+/// troc `annule`, objets libérés, parties notifiées. Retourne `true` si
+/// l'annulation vient d'avoir lieu.
 async fn expire_unpaid_if_overdue(state: &AppState, trade_id: Uuid) -> sqlx::Result<bool> {
-    let Some(payment) = infra::payment_repo::payment_for_trade(&state.pool, trade_id).await? else {
-        return Ok(false);
-    };
-    if !paiement::peut_expirer(&payment.status) || payment.deadline > chrono::Utc::now() {
+    let payments = infra::payment_repo::payments_for_trade(&state.pool, trade_id).await?;
+    let now = chrono::Utc::now();
+    if !payments
+        .iter()
+        .any(|p| paiement::peut_expirer(&p.status) && p.deadline < now)
+    {
         return Ok(false);
     }
-    let parties = infra::payment_repo::expire_unpaid_trade(&state.pool, trade_id).await?;
+    let (parties, released) =
+        infra::payment_repo::expire_unpaid_trade(&state.pool, trade_id).await?;
     if parties.is_empty() {
         return Ok(false);
+    }
+    // Mode envoi : l'autre partie avait pu payer — relâcher sa préautorisation.
+    for payment in &released {
+        notify_released_preauth(state, payment).await;
     }
     for party in &parties {
         if let Err(error) = state
@@ -820,12 +923,45 @@ async fn expire_unpaid_if_overdue(state: &AppState, trade_id: Uuid) -> sqlx::Res
         json!({"trade_id": trade_id, "failure_reason": "delai_depasse"}),
     )
     .await;
-    tracing::info!(%trade_id, "troc annulé : soulte jamais réglée");
+    tracing::info!(%trade_id, "troc annulé : règlement jamais effectué");
     Ok(true)
 }
 
-/// Préautoriser la soulte (F4.2) — réservé au payeur, tant que la date
-/// limite n'est pas dépassée. Bêta fermée : PSP simulé, aucune carte réelle.
+/// Relâche une préautorisation côté PSP et prévient le payeur — utilisé
+/// chaque fois qu'un paiement séquestré vient d'être marqué `annule`.
+async fn notify_released_preauth(state: &AppState, payment: &infra::payment_repo::Payment) {
+    if let Some(provider_ref) = payment.provider_ref.as_deref() {
+        if let Err(error) = state.payments.cancel(provider_ref).await {
+            tracing::error!(%error, trade_id = %payment.trade_id,
+                "libération de la préautorisation PSP en échec");
+        }
+    }
+    if payment.escrowed_at.is_none() {
+        return;
+    }
+    telemetry::track(
+        state,
+        "payment_refunded",
+        None,
+        json!({"trade_id": payment.trade_id, "amount_cents": payment.amount_cents,
+               "method": "preauth_cancel"}),
+    )
+    .await;
+    if let Ok(Some(payer)) = infra::auth_repo::find_user_by_id(&state.pool, payment.payer_id).await
+    {
+        if let Err(error) = state
+            .mailer
+            .send_payment_cancelled_payer(&payer.email, &payer.pseudo, payment.amount_cents)
+            .await
+        {
+            tracing::error!(%error, trade_id = %payment.trade_id, "e-mail de libération en échec");
+        }
+    }
+}
+
+/// Préautoriser mon règlement (soulte F4.2 et/ou frais d'envoi F4.3) —
+/// réservé au payeur, tant que la date limite n'est pas dépassée. Bêta
+/// fermée : PSP simulé, aucune carte réelle.
 #[utoipa::path(
     post,
     path = "/trades/{id}/pay",
@@ -833,8 +969,8 @@ async fn expire_unpaid_if_overdue(state: &AppState, trade_id: Uuid) -> sqlx::Res
     params(("id" = Uuid, Path, description = "Identifiant du troc")),
     request_body = PayTradeRequest,
     responses(
-        (status = 200, description = "Soulte séquestrée (ou déjà séquestrée)", body = TradeDetailResponse),
-        (status = 400, description = "Refus, délai dépassé ou pas de soulte", body = crate::error::ErrorResponse),
+        (status = 200, description = "Règlement séquestré (ou déjà séquestré)", body = TradeDetailResponse),
+        (status = 400, description = "Refus, délai dépassé ou rien à payer", body = crate::error::ErrorResponse),
         (status = 404, description = "Introuvable", body = crate::error::ErrorResponse)
     )
 )]
@@ -845,18 +981,14 @@ pub async fn pay_trade(
     Json(body): Json<PayTradeRequest>,
 ) -> Result<Json<TradeDetailResponse>, ApiError> {
     let trade = participant_trade(&state, id, user.user_id).await?;
-    let Some(payment) = infra::payment_repo::payment_for_trade(&state.pool, id).await? else {
-        return Err(ApiError::bad_request(
-            "aucun_paiement",
-            "Ce troc ne comporte pas de soulte.",
-        ));
-    };
-    if payment.payer_id != user.user_id {
+    let Some(payment) =
+        infra::payment_repo::payment_for_payer(&state.pool, id, user.user_id).await?
+    else {
         return Err(ApiError::bad_request(
             "pas_le_payeur",
-            "C'est à l'autre partie de régler la soulte.",
+            "Tu n'as rien à régler sur ce troc.",
         ));
-    }
+    };
     // Idempotence : un double clic renvoie simplement l'état séquestré.
     if matches!(payment.status.as_str(), "sequestre" | "capture") {
         return Ok(Json(
@@ -875,6 +1007,13 @@ pub async fn pay_trade(
         return Err(ApiError::bad_request(
             "paiement_expire",
             "Le délai de paiement est dépassé : le troc a été annulé et les objets libérés.",
+        ));
+    }
+    // Mode envoi : le format fixe le transport — pas de paiement à l'aveugle.
+    if trade.delivery_mode == "envoi" && payment.shipping_cents == 0 {
+        return Err(ApiError::bad_request(
+            "envoi_non_configure",
+            "Choisis d'abord le format de ton colis et ton point relais.",
         ));
     }
 
@@ -899,7 +1038,7 @@ pub async fn pay_trade(
     )
     .await;
 
-    let reference = format!("trade-{id}");
+    let reference = format!("payment-{}", payment.id);
     let outcome = state
         .payments
         .preauthorize(infra::payment::PreauthRequest {
@@ -943,7 +1082,9 @@ pub async fn pay_trade(
             Ok(Json(response))
         }
         infra::payment::PreauthOutcome::Escrowed { provider_ref } => {
-            match infra::payment_repo::escrow_payment(&state.pool, id, Some(&provider_ref)).await? {
+            match infra::payment_repo::escrow_payment(&state.pool, payment.id, Some(&provider_ref))
+                .await?
+            {
                 infra::payment_repo::EscrowOutcome::NotPending => {
                     return Err(ApiError::bad_request(
                         "troc_clos",
@@ -951,7 +1092,10 @@ pub async fn pay_trade(
                     ))
                 }
                 infra::payment_repo::EscrowOutcome::AlreadyEscrowed => {}
-                infra::payment_repo::EscrowOutcome::Escrowed { evictions } => {
+                infra::payment_repo::EscrowOutcome::Escrowed {
+                    trade_activated,
+                    evictions,
+                } => {
                     telemetry::track(
                         &state,
                         "payment_escrowed",
@@ -960,42 +1104,52 @@ pub async fn pay_trade(
                     )
                     .await;
                     notify_evictions(&state, evictions).await;
-                    match infra::auth_repo::find_user_by_id(&state.pool, payment.beneficiary_id)
-                        .await
-                    {
-                        Ok(Some(beneficiary)) => {
-                            let payer_pseudo =
-                                infra::auth_repo::find_user_by_id(&state.pool, payment.payer_id)
-                                    .await
-                                    .ok()
-                                    .flatten()
-                                    .map(|u| u.pseudo)
-                                    .unwrap_or_default();
-                            if let Err(error) = state
-                                .mailer
-                                .send_payment_escrowed(
-                                    &beneficiary.email,
-                                    &beneficiary.pseudo,
-                                    &payer_pseudo,
-                                    payment.amount_cents,
+                    // La soulte séquestrée mérite un e-mail au bénéficiaire ;
+                    // les simples frais d'envoi, non.
+                    if payment.cash_cents() > 0 {
+                        match infra::auth_repo::find_user_by_id(&state.pool, payment.beneficiary_id)
+                            .await
+                        {
+                            Ok(Some(beneficiary)) => {
+                                let payer_pseudo = infra::auth_repo::find_user_by_id(
+                                    &state.pool,
+                                    payment.payer_id,
                                 )
                                 .await
-                            {
-                                tracing::error!(%error, trade_id = %id,
-                                    "e-mail de séquestre en échec");
+                                .ok()
+                                .flatten()
+                                .map(|u| u.pseudo)
+                                .unwrap_or_default();
+                                if let Err(error) = state
+                                    .mailer
+                                    .send_payment_escrowed(
+                                        &beneficiary.email,
+                                        &beneficiary.pseudo,
+                                        &payer_pseudo,
+                                        payment.cash_cents(),
+                                    )
+                                    .await
+                                {
+                                    tracing::error!(%error, trade_id = %id,
+                                        "e-mail de séquestre en échec");
+                                }
                             }
+                            Ok(None) => {}
+                            Err(error) => tracing::error!(%error, "bénéficiaire introuvable"),
                         }
-                        Ok(None) => {}
-                        Err(error) => tracing::error!(%error, "bénéficiaire introuvable"),
                     }
                     let trade = participant_trade(&state, id, user.user_id).await?;
+                    // Mode envoi : le troc activé peut générer ses étiquettes.
+                    if trade.delivery_mode == "envoi" && trade_activated {
+                        ensure_labels(&state, id).await;
+                    }
                     broadcast_event(
                         &state,
                         [trade.proposer_id, trade.recipient_id],
                         json!({"type": "trade_updated", "proposal_id": trade.proposal_id,
                                "trade_id": id}),
                     );
-                    tracing::info!(trade_id = %id, "soulte séquestrée");
+                    tracing::info!(trade_id = %id, "règlement séquestré");
                     return Ok(Json(
                         full_trade_response(&state, trade, user.user_id).await?,
                     ));
@@ -1005,6 +1159,63 @@ pub async fn pay_trade(
             Ok(Json(
                 full_trade_response(&state, trade, user.user_id).await?,
             ))
+        }
+    }
+}
+
+/// Génère les étiquettes des colis prêts (troc actif, payé, format et
+/// relais connus) — idempotent, appelé après chaque événement déclencheur.
+async fn ensure_labels(state: &AppState, trade_id: Uuid) {
+    let ready = match infra::shipping_repo::shipments_ready_for_label(&state.pool, trade_id).await {
+        Ok(ready) => ready,
+        Err(error) => {
+            tracing::error!(%error, %trade_id, "recherche des colis à étiqueter en échec");
+            return;
+        }
+    };
+    for shipment in ready {
+        let reference = format!("shipment-{}", shipment.id);
+        let (Some(format), Some(relay_code)) = (&shipment.format, &shipment.relay_code) else {
+            continue;
+        };
+        match state
+            .shipping
+            .create_label(infra::shipping::LabelRequest {
+                reference: &reference,
+                format,
+                relay_code,
+            })
+            .await
+        {
+            Ok(label) => {
+                match infra::shipping_repo::mark_labeled(
+                    &state.pool,
+                    shipment.id,
+                    state.shipping.name(),
+                    &label.provider_ref,
+                    &label.drop_code,
+                )
+                .await
+                {
+                    Ok(true) => {
+                        telemetry::track(
+                            state,
+                            "shipping_label_generated",
+                            None,
+                            json!({"trade_id": trade_id, "shipment_id": shipment.id,
+                                   "format": format}),
+                        )
+                        .await;
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        tracing::error!(%error, shipment_id = %shipment.id,
+                            "enregistrement d'étiquette en échec")
+                    }
+                }
+            }
+            Err(error) => tracing::error!(%error, shipment_id = %shipment.id,
+                "génération d'étiquette en échec"),
         }
     }
 }
@@ -1029,6 +1240,15 @@ pub async fn confirm_trade(
     Path(id): Path<Uuid>,
     Json(body): Json<ConfirmTradeRequest>,
 ) -> Result<Json<TradeDetailResponse>, ApiError> {
+    // Les codes croisés sont le rituel de la main propre ; en mode envoi,
+    // la finalisation passe par la réception des deux colis.
+    let apercu = participant_trade(&state, id, user.user_id).await?;
+    if apercu.delivery_mode == "envoi" {
+        return Err(ApiError::bad_request(
+            "mode_envoi",
+            "Ce troc se finalise à la réception des colis, pas par codes.",
+        ));
+    }
     let code: String = body.code.chars().filter(|c| c.is_ascii_digit()).collect();
     let outcome = infra::trade_repo::confirm_trade(&state.pool, id, user.user_id, &code).await?;
     match outcome {
@@ -1055,9 +1275,7 @@ pub async fn confirm_trade(
                 )
                 .await;
                 // Remise confirmée par les deux codes : capturer la soulte.
-                if let Some(payment) =
-                    infra::payment_repo::payment_for_trade(&state.pool, id).await?
-                {
+                for payment in infra::payment_repo::payments_for_trade(&state.pool, id).await? {
                     if paiement::peut_capturer(&payment.status) {
                         capture_payment(&state, &payment).await;
                     }
@@ -1074,7 +1292,7 @@ pub async fn confirm_trade(
     }
 }
 
-/// Capture une soulte séquestrée (remise confirmée) : PSP, transition SQL,
+/// Capture un règlement séquestré (échange abouti) : PSP, transition SQL,
 /// e-mails, télémétrie. En cas d'échec PSP le paiement reste `sequestre` —
 /// la maintenance horaire retentera.
 async fn capture_payment(state: &AppState, payment: &infra::payment_repo::Payment) {
@@ -1088,7 +1306,7 @@ async fn capture_payment(state: &AppState, payment: &infra::payment_repo::Paymen
         .await
     {
         tracing::error!(%error, trade_id = %payment.trade_id,
-            "capture de la soulte en échec — la maintenance retentera");
+            "capture du règlement en échec — la maintenance retentera");
         return;
     }
     match infra::payment_repo::mark_captured(&state.pool, payment.id).await {
@@ -1107,81 +1325,57 @@ async fn capture_payment(state: &AppState, payment: &infra::payment_repo::Paymen
                "fees_cents": payment.fees_cents}),
     )
     .await;
-    let net = paiement::net_beneficiaire_cents(payment.amount_cents, payment.fees_cents);
-    let payer = infra::auth_repo::find_user_by_id(&state.pool, payment.payer_id)
-        .await
-        .ok()
-        .flatten();
-    let beneficiary = infra::auth_repo::find_user_by_id(&state.pool, payment.beneficiary_id)
-        .await
-        .ok()
-        .flatten();
-    if let (Some(payer), Some(beneficiary)) = (payer, beneficiary) {
-        if let Err(error) = state
-            .mailer
-            .send_payment_released_beneficiary(
-                &beneficiary.email,
-                &beneficiary.pseudo,
-                &payer.pseudo,
-                net,
-            )
+    // Le transfert de soulte mérite ses e-mails ; la simple capture des
+    // frais d'envoi, non (l'e-mail de finalisation suffit).
+    let cash = payment.cash_cents();
+    if cash > 0 {
+        let net = paiement::net_beneficiaire_cents(cash, payment.fees_cents);
+        let payer = infra::auth_repo::find_user_by_id(&state.pool, payment.payer_id)
             .await
-        {
-            tracing::error!(%error, "e-mail de transfert (bénéficiaire) en échec");
-        }
-        if let Err(error) = state
-            .mailer
-            .send_payment_released_payer(
-                &payer.email,
-                &payer.pseudo,
-                &beneficiary.pseudo,
-                payment.amount_cents,
-            )
+            .ok()
+            .flatten();
+        let beneficiary = infra::auth_repo::find_user_by_id(&state.pool, payment.beneficiary_id)
             .await
-        {
-            tracing::error!(%error, "e-mail de transfert (payeur) en échec");
+            .ok()
+            .flatten();
+        if let (Some(payer), Some(beneficiary)) = (payer, beneficiary) {
+            if let Err(error) = state
+                .mailer
+                .send_payment_released_beneficiary(
+                    &beneficiary.email,
+                    &beneficiary.pseudo,
+                    &payer.pseudo,
+                    net,
+                )
+                .await
+            {
+                tracing::error!(%error, "e-mail de transfert (bénéficiaire) en échec");
+            }
+            if let Err(error) = state
+                .mailer
+                .send_payment_released_payer(&payer.email, &payer.pseudo, &beneficiary.pseudo, cash)
+                .await
+            {
+                tracing::error!(%error, "e-mail de transfert (payeur) en échec");
+            }
         }
     }
-    tracing::info!(trade_id = %payment.trade_id, "soulte capturée");
+    tracing::info!(trade_id = %payment.trade_id, "règlement capturé");
 }
 
-/// Libère le paiement d'un troc annulé (préautorisation relâchée) et prévient
-/// le payeur. Idempotent — sans effet si rien n'était séquestré.
-async fn release_payment_if_any(state: &AppState, trade_id: Uuid) {
-    let payment = match infra::payment_repo::cancel_payment_for_trade(&state.pool, trade_id).await {
-        Ok(payment) => payment,
+/// Libère les paiements d'un troc annulé (préautorisations relâchées) et
+/// prévient les payeurs. Idempotent — sans effet si rien n'était en cours.
+async fn release_payments_if_any(state: &AppState, trade_id: Uuid) {
+    let payments = match infra::payment_repo::cancel_payments_for_trade(&state.pool, trade_id).await
+    {
+        Ok(payments) => payments,
         Err(error) => {
-            tracing::error!(%error, %trade_id, "libération du paiement en échec");
+            tracing::error!(%error, %trade_id, "libération des paiements en échec");
             return;
         }
     };
-    let Some(payment) = payment else { return };
-    if let Some(provider_ref) = payment.provider_ref.as_deref() {
-        if let Err(error) = state.payments.cancel(provider_ref).await {
-            tracing::error!(%error, %trade_id, "libération de la préautorisation PSP en échec");
-        }
-    }
-    // On ne prévient le payeur que si des fonds étaient réellement bloqués.
-    if payment.escrowed_at.is_some() {
-        telemetry::track(
-            state,
-            "payment_refunded",
-            None,
-            json!({"trade_id": trade_id, "amount_cents": payment.amount_cents,
-                   "method": "preauth_cancel"}),
-        )
-        .await;
-        if let Ok(Some(payer)) =
-            infra::auth_repo::find_user_by_id(&state.pool, payment.payer_id).await
-        {
-            if let Err(error) = state
-                .mailer
-                .send_payment_cancelled_payer(&payer.email, &payer.pseudo, payment.amount_cents)
-                .await
-            {
-                tracing::error!(%error, %trade_id, "e-mail de libération en échec");
-            }
-        }
+    for payment in &payments {
+        notify_released_preauth(state, payment).await;
     }
 }
 
@@ -1211,6 +1405,11 @@ pub async fn cancel_trade(
             "troc_clos",
             "Ce troc n'est plus annulable.",
         )),
+        infra::trade_repo::CancelOutcome::ParcelsMoving => Err(ApiError::bad_request(
+            "colis_en_route",
+            "Un colis a déjà voyagé : le troc ne peut plus être annulé à l'amiable. \
+             Signale un problème à la réception si besoin.",
+        )),
         infra::trade_repo::CancelOutcome::Pending => {
             let trade = participant_trade(&state, id, user.user_id).await?;
             Ok(Json(
@@ -1225,7 +1424,7 @@ pub async fn cancel_trade(
                 json!({"trade_id": id}),
             )
             .await;
-            release_payment_if_any(&state, id).await;
+            release_payments_if_any(&state, id).await;
             let trade = participant_trade(&state, id, user.user_id).await?;
             Ok(Json(
                 full_trade_response(&state, trade, user.user_id).await?,
@@ -1243,6 +1442,14 @@ pub struct MaintenanceReport {
     pub payments_expired: usize,
     /// Captures retentées avec succès après un échec à la remise (F4.2).
     pub captures_retried: usize,
+    /// Rappels de dépôt envoyés (F4.3, J+2 et J+4).
+    pub drop_reminders: usize,
+    /// Trocs envoi annulés (aucun dépôt J+5).
+    pub shipping_cancelled: usize,
+    /// Trocs envoi gelés pour examen (dépôt partiel J+5, zombie J+21).
+    pub shipping_frozen: usize,
+    /// Colis confirmés automatiquement (72 h après retrait).
+    pub auto_confirmed: usize,
 }
 
 /// Maintenance des trocs : relance J+7, annulation automatique J+14
@@ -1281,7 +1488,7 @@ pub async fn maintain_trades(state: &AppState) -> MaintenanceReport {
                     )
                     .await;
                     // Un troc J+14 peut porter une soulte séquestrée : libérer.
-                    release_payment_if_any(state, party.trade_id).await;
+                    release_payments_if_any(state, party.trade_id).await;
                 }
                 if let Err(error) = state
                     .mailer
@@ -1299,6 +1506,8 @@ pub async fn maintain_trades(state: &AppState) -> MaintenanceReport {
     let (payments_expired, captures_retried) = maintain_payments(state).await;
     report.payments_expired = payments_expired;
     report.captures_retried = captures_retried;
+    maintain_shipping(state, &mut report).await;
+    report.auto_confirmed = auto_confirm_shipments(state).await;
     report.reminded = reminded;
     report.cancelled = cancelled;
     report
@@ -1337,4 +1546,633 @@ pub async fn maintain_payments(state: &AppState) -> (usize, usize) {
         Err(error) => tracing::error!(%error, "recherche des captures à retenter en échec"),
     }
     (expired, captures)
+}
+
+// ————— Envoi croisé (F4.3) —————
+
+/// Les points relais proches de chez moi (pour recevoir l'autre colis).
+#[utoipa::path(
+    get,
+    path = "/trades/{id}/relays",
+    tag = "trade",
+    params(("id" = Uuid, Path, description = "Identifiant du troc")),
+    responses(
+        (status = 200, description = "Relais proposés", body = [RelayResponse]),
+        (status = 404, description = "Introuvable", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn trade_relays(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<RelayResponse>>, ApiError> {
+    participant_trade(&state, id, user.user_id).await?;
+    let me = infra::auth_repo::find_user_by_id(&state.pool, user.user_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Compte introuvable."))?;
+    let relays = state
+        .shipping
+        .search_relays(&me.postal_code)
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(Json(
+        relays
+            .into_iter()
+            .map(|r| RelayResponse {
+                code: r.code,
+                name: r.name,
+                address: r.address,
+            })
+            .collect(),
+    ))
+}
+
+/// Configurer mon envoi : le format de MON colis (fixe mon transport) et le
+/// relais où je recevrai le sien. Modifiable tant que je n'ai pas payé.
+#[utoipa::path(
+    post,
+    path = "/trades/{id}/shipping",
+    tag = "trade",
+    params(("id" = Uuid, Path, description = "Identifiant du troc")),
+    request_body = ConfigureShippingRequest,
+    responses(
+        (status = 200, description = "Envoi configuré", body = TradeDetailResponse),
+        (status = 400, description = "Format ou relais invalide, ou trop tard", body = crate::error::ErrorResponse),
+        (status = 404, description = "Introuvable", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn configure_shipping(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<ConfigureShippingRequest>,
+) -> Result<Json<TradeDetailResponse>, ApiError> {
+    let trade = participant_trade(&state, id, user.user_id).await?;
+    if trade.delivery_mode != "envoi" {
+        return Err(ApiError::bad_request(
+            "mode_main_propre",
+            "Ce troc se fait en main propre — rien à expédier.",
+        ));
+    }
+    let Some(transport) = expedition::transport_cents(&body.format) else {
+        return Err(ApiError::bad_request(
+            "format_inconnu",
+            "Choisis un format S (≤ 1 kg), M (≤ 3 kg) ou L (≤ 10 kg).",
+        ));
+    };
+    // Le relais vient de la liste proposée — on revalide et on récupère
+    // son nom et son adresse au passage.
+    let me = infra::auth_repo::find_user_by_id(&state.pool, user.user_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Compte introuvable."))?;
+    let relays = state
+        .shipping
+        .search_relays(&me.postal_code)
+        .await
+        .map_err(ApiError::internal)?;
+    let Some(relay) = relays.iter().find(|r| r.code == body.relay_code) else {
+        return Err(ApiError::bad_request(
+            "relais_inconnu",
+            "Ce point relais ne fait pas partie de ceux proposés — recharge la liste.",
+        ));
+    };
+    let configured = infra::shipping_repo::configure_my_shipping(
+        &state.pool,
+        id,
+        user.user_id,
+        &body.format,
+        transport,
+        &relay.code,
+        &relay.name,
+        &relay.address,
+    )
+    .await?;
+    if !configured {
+        return Err(ApiError::bad_request(
+            "envoi_fige",
+            "Ton envoi n'est plus modifiable (déjà payé ou étiquette générée).",
+        ));
+    }
+    let trade = participant_trade(&state, id, user.user_id).await?;
+    Ok(Json(
+        full_trade_response(&state, trade, user.user_id).await?,
+    ))
+}
+
+/// Vérifie que je suis bien une partie du colis, et le retourne.
+async fn my_shipment(
+    state: &AppState,
+    shipment_id: Uuid,
+    user_id: Uuid,
+) -> Result<infra::shipping_repo::Shipment, ApiError> {
+    infra::shipping_repo::get_shipment(&state.pool, shipment_id)
+        .await?
+        .filter(|s| s.sender_id == user_id || s.recipient_id == user_id)
+        .ok_or_else(|| ApiError::not_found("Ce colis n'existe pas."))
+}
+
+/// J'ai déposé mon colis au point relais. Le simulateur de la bêta le fait
+/// « arriver » immédiatement chez le destinataire.
+#[utoipa::path(
+    post,
+    path = "/shipments/{id}/drop",
+    tag = "trade",
+    params(("id" = Uuid, Path, description = "Identifiant du colis")),
+    responses(
+        (status = 200, description = "Dépôt enregistré", body = TradeDetailResponse),
+        (status = 400, description = "Pas d'étiquette ou déjà déposé", body = crate::error::ErrorResponse),
+        (status = 404, description = "Introuvable", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn drop_parcel(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<TradeDetailResponse>, ApiError> {
+    let shipment = my_shipment(&state, id, user.user_id).await?;
+    if !infra::shipping_repo::mark_dropped(&state.pool, id, user.user_id).await? {
+        return Err(ApiError::bad_request(
+            "depot_impossible",
+            "Ce colis n'a pas d'étiquette à déposer (ou l'est déjà).",
+        ));
+    }
+    telemetry::track(
+        &state,
+        "parcel_dropped",
+        Some(user.user_id),
+        json!({"trade_id": shipment.trade_id, "shipment_id": id}),
+    )
+    .await;
+
+    // Suivi : le simulateur répond « arrivé en relais » immédiatement ; le
+    // transporteur réel avancera par webhooks/polling.
+    let status = state
+        .shipping
+        .tracking_status(shipment.provider_ref.as_deref().unwrap_or(""))
+        .await;
+    if let Ok(infra::shipping::TrackingStatus::ArrivedAtRelay) = status {
+        if infra::shipping_repo::mark_arrived(&state.pool, id).await? {
+            telemetry::track(
+                &state,
+                "parcel_delivered",
+                None,
+                json!({"trade_id": shipment.trade_id, "shipment_id": id}),
+            )
+            .await;
+            if let Ok(Some(recipient)) =
+                infra::auth_repo::find_user_by_id(&state.pool, shipment.recipient_id).await
+            {
+                let sender_pseudo =
+                    infra::auth_repo::find_user_by_id(&state.pool, shipment.sender_id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|u| u.pseudo)
+                        .unwrap_or_default();
+                if let Err(error) = state
+                    .mailer
+                    .send_parcel_arrived(
+                        &recipient.email,
+                        &recipient.pseudo,
+                        &sender_pseudo,
+                        shipment.relay_name.as_deref().unwrap_or("point relais"),
+                    )
+                    .await
+                {
+                    tracing::error!(%error, shipment_id = %id, "e-mail d'arrivée en échec");
+                }
+            }
+        }
+    }
+    broadcast_event(
+        &state,
+        [shipment.sender_id, shipment.recipient_id],
+        json!({"type": "trade_updated", "trade_id": shipment.trade_id}),
+    );
+    let trade = participant_trade(&state, shipment.trade_id, user.user_id).await?;
+    Ok(Json(
+        full_trade_response(&state, trade, user.user_id).await?,
+    ))
+}
+
+/// J'ai récupéré le colis au relais — la fenêtre de 72 h démarre.
+#[utoipa::path(
+    post,
+    path = "/shipments/{id}/pickup",
+    tag = "trade",
+    params(("id" = Uuid, Path, description = "Identifiant du colis")),
+    responses(
+        (status = 200, description = "Retrait enregistré", body = TradeDetailResponse),
+        (status = 400, description = "Colis pas encore arrivé", body = crate::error::ErrorResponse),
+        (status = 404, description = "Introuvable", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn pickup_parcel(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<TradeDetailResponse>, ApiError> {
+    let shipment = my_shipment(&state, id, user.user_id).await?;
+    if !infra::shipping_repo::mark_picked_up(&state.pool, id, user.user_id).await? {
+        return Err(ApiError::bad_request(
+            "retrait_impossible",
+            "Ce colis n'est pas encore arrivé au relais (ou est déjà retiré).",
+        ));
+    }
+    telemetry::track(
+        &state,
+        "parcel_picked_up",
+        Some(user.user_id),
+        json!({"trade_id": shipment.trade_id, "shipment_id": id}),
+    )
+    .await;
+    broadcast_event(
+        &state,
+        [shipment.sender_id, shipment.recipient_id],
+        json!({"type": "trade_updated", "trade_id": shipment.trade_id}),
+    );
+    let trade = participant_trade(&state, shipment.trade_id, user.user_id).await?;
+    Ok(Json(
+        full_trade_response(&state, trade, user.user_id).await?,
+    ))
+}
+
+/// Tout est OK : je confirme le colis reçu. Les deux confirmations
+/// finalisent le troc et capturent les règlements (Gherkin F4.3).
+#[utoipa::path(
+    post,
+    path = "/shipments/{id}/confirm",
+    tag = "trade",
+    params(("id" = Uuid, Path, description = "Identifiant du colis")),
+    responses(
+        (status = 200, description = "Réception confirmée", body = TradeDetailResponse),
+        (status = 400, description = "Colis pas encore retiré", body = crate::error::ErrorResponse),
+        (status = 404, description = "Introuvable", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn confirm_parcel(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<TradeDetailResponse>, ApiError> {
+    let shipment = my_shipment(&state, id, user.user_id).await?;
+    if !infra::shipping_repo::confirm_shipment(&state.pool, id, user.user_id).await? {
+        return Err(ApiError::bad_request(
+            "confirmation_impossible",
+            "Retire d'abord le colis au relais avant de confirmer.",
+        ));
+    }
+    telemetry::track(
+        &state,
+        "delivery_confirmed",
+        Some(user.user_id),
+        json!({"trade_id": shipment.trade_id, "shipment_id": id, "auto": false}),
+    )
+    .await;
+    maybe_finalize_shipping(&state, shipment.trade_id).await;
+    broadcast_event(
+        &state,
+        [shipment.sender_id, shipment.recipient_id],
+        json!({"type": "trade_updated", "trade_id": shipment.trade_id}),
+    );
+    let trade = participant_trade(&state, shipment.trade_id, user.user_id).await?;
+    Ok(Json(
+        full_trade_response(&state, trade, user.user_id).await?,
+    ))
+}
+
+/// Un problème avec le colis reçu : le troc est gelé pour examen manuel,
+/// les règlements restent séquestrés (ni capturés ni libérés).
+#[utoipa::path(
+    post,
+    path = "/shipments/{id}/report",
+    tag = "trade",
+    params(("id" = Uuid, Path, description = "Identifiant du colis")),
+    request_body = ReportIssueRequest,
+    responses(
+        (status = 200, description = "Signalement enregistré, troc gelé", body = TradeDetailResponse),
+        (status = 400, description = "Trop tôt ou trop tard pour signaler", body = crate::error::ErrorResponse),
+        (status = 404, description = "Introuvable", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn report_parcel(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<ReportIssueRequest>,
+) -> Result<Json<TradeDetailResponse>, ApiError> {
+    let shipment = my_shipment(&state, id, user.user_id).await?;
+    let reason: String = body.reason.trim().chars().take(500).collect();
+    if reason.is_empty() {
+        return Err(ApiError::bad_request(
+            "motif_manquant",
+            "Décris le problème en quelques mots.",
+        ));
+    }
+    let Some(trade_id) =
+        infra::shipping_repo::report_issue(&state.pool, id, user.user_id, &reason).await?
+    else {
+        return Err(ApiError::bad_request(
+            "signalement_impossible",
+            "Un signalement se fait à la réception du colis (arrivé ou retiré).",
+        ));
+    };
+    infra::shipping_repo::record_dispute_event(
+        &state.pool,
+        trade_id,
+        "livraison_signalee",
+        None,
+        Some(&reason),
+    )
+    .await?;
+    telemetry::track(
+        &state,
+        "delivery_issue_reported",
+        Some(user.user_id),
+        json!({"trade_id": trade_id, "shipment_id": id}),
+    )
+    .await;
+    notify_frozen_trade(&state, trade_id, &format!("signalement : {reason}")).await;
+    broadcast_event(
+        &state,
+        [shipment.sender_id, shipment.recipient_id],
+        json!({"type": "trade_updated", "trade_id": trade_id}),
+    );
+    let trade = participant_trade(&state, trade_id, user.user_id).await?;
+    Ok(Json(
+        full_trade_response(&state, trade, user.user_id).await?,
+    ))
+}
+
+/// Finalise le troc envoi si les deux colis sont confirmés : troc
+/// `finalise`, objets `troque`, règlements capturés, e-mails aux deux.
+async fn maybe_finalize_shipping(state: &AppState, trade_id: Uuid) {
+    match infra::shipping_repo::finalize_shipping_trade(&state.pool, trade_id).await {
+        Ok(false) => {}
+        Ok(true) => {
+            telemetry::track(
+                state,
+                "trade_finalized",
+                None,
+                json!({"trade_id": trade_id, "delivery_mode": "envoi"}),
+            )
+            .await;
+            match infra::payment_repo::payments_for_trade(&state.pool, trade_id).await {
+                Ok(payments) => {
+                    for payment in payments {
+                        if paiement::peut_capturer(&payment.status) {
+                            capture_payment(state, &payment).await;
+                        }
+                    }
+                }
+                Err(error) => tracing::error!(%error, %trade_id, "paiements introuvables"),
+            }
+            if let Ok(Some(trade)) = infra::trade_repo::get_trade(&state.pool, trade_id).await {
+                for (me, other) in [
+                    (trade.proposer_id, trade.recipient_id),
+                    (trade.recipient_id, trade.proposer_id),
+                ] {
+                    let user = infra::auth_repo::find_user_by_id(&state.pool, me)
+                        .await
+                        .ok()
+                        .flatten();
+                    let other_pseudo = infra::auth_repo::find_user_by_id(&state.pool, other)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|u| u.pseudo)
+                        .unwrap_or_default();
+                    if let Some(user) = user {
+                        if let Err(error) = state
+                            .mailer
+                            .send_trade_finalized_shipping(&user.email, &user.pseudo, &other_pseudo)
+                            .await
+                        {
+                            tracing::error!(%error, %trade_id, "e-mail de finalisation en échec");
+                        }
+                    }
+                }
+                broadcast_event(
+                    state,
+                    [trade.proposer_id, trade.recipient_id],
+                    json!({"type": "trade_updated", "trade_id": trade_id}),
+                );
+            }
+            tracing::info!(%trade_id, "troc envoi finalisé");
+        }
+        Err(error) => tracing::error!(%error, %trade_id, "finalisation envoi en échec"),
+    }
+}
+
+/// Prévient les parties et l'admin qu'un troc vient d'être gelé.
+async fn notify_frozen_trade(state: &AppState, trade_id: Uuid, details: &str) {
+    if let Err(error) = state
+        .mailer
+        .send_admin_dispute(&state.config.admin_email, &trade_id.to_string(), details)
+        .await
+    {
+        tracing::error!(%error, %trade_id, "e-mail admin de litige en échec");
+    }
+    if let Ok(Some(trade)) = infra::trade_repo::get_trade(&state.pool, trade_id).await {
+        for (me, other) in [
+            (trade.proposer_id, trade.recipient_id),
+            (trade.recipient_id, trade.proposer_id),
+        ] {
+            let user = infra::auth_repo::find_user_by_id(&state.pool, me)
+                .await
+                .ok()
+                .flatten();
+            let other_pseudo = infra::auth_repo::find_user_by_id(&state.pool, other)
+                .await
+                .ok()
+                .flatten()
+                .map(|u| u.pseudo)
+                .unwrap_or_default();
+            if let Some(user) = user {
+                if let Err(error) = state
+                    .mailer
+                    .send_shipping_failed(&user.email, &user.pseudo, &other_pseudo, true)
+                    .await
+                {
+                    tracing::error!(%error, %trade_id, "e-mail de gel en échec");
+                }
+            }
+        }
+    }
+}
+
+/// Auto-confirmation des colis retirés depuis plus de 72 h — boucle rapide
+/// (10 min), car elle peut finaliser un troc et capturer des règlements.
+pub async fn auto_confirm_shipments(state: &AppState) -> usize {
+    let trade_ids = match infra::shipping_repo::claim_auto_confirmations(
+        &state.pool,
+        expedition::CONFIRMATION_HEURES,
+    )
+    .await
+    {
+        Ok(ids) => ids,
+        Err(error) => {
+            tracing::error!(%error, "auto-confirmation des colis en échec");
+            return 0;
+        }
+    };
+    let count = trade_ids.len();
+    for trade_id in &trade_ids {
+        telemetry::track(
+            state,
+            "delivery_confirmed",
+            None,
+            json!({"trade_id": trade_id, "auto": true}),
+        )
+        .await;
+        maybe_finalize_shipping(state, *trade_id).await;
+    }
+    count
+}
+
+/// Maintenance horaire de l'envoi : rappels de dépôt J+2/J+4, échec de
+/// dépôt J+5 (annulation ou gel), filet J+21.
+async fn maintain_shipping(state: &AppState, report: &mut MaintenanceReport) {
+    // Rappels de dépôt.
+    for (level, days) in expedition::RAPPEL_DEPOT_JOURS.iter().enumerate() {
+        match infra::shipping_repo::claim_drop_reminders(&state.pool, *days, level as i32 + 1).await
+        {
+            Ok(reminders) => {
+                for reminder in &reminders {
+                    if let Err(error) = state
+                        .mailer
+                        .send_drop_reminder(
+                            &reminder.email,
+                            &reminder.pseudo,
+                            &reminder.other_pseudo,
+                            reminder.level == 2,
+                        )
+                        .await
+                    {
+                        tracing::error!(%error, shipment_id = %reminder.shipment_id,
+                            "rappel de dépôt en échec");
+                    }
+                }
+                report.drop_reminders += reminders.len();
+            }
+            Err(error) => tracing::error!(%error, "rappels de dépôt en échec"),
+        }
+    }
+
+    // Échec de dépôt J+5 : aucun colis parti → annulation propre ; un seul
+    // parti → gel + journal des défaillances (F5.2 sanctionnera).
+    match infra::shipping_repo::overdue_drop_trades(&state.pool, expedition::ECHEC_DEPOT_JOURS)
+        .await
+    {
+        Ok(trades) => {
+            for (trade_id, dropped_count) in trades {
+                if dropped_count == 0 {
+                    // Personne n'a expédié : annulation simple, pas un litige.
+                    match infra::shipping_repo::cancel_shipping_trade(&state.pool, trade_id).await {
+                        Ok(true) => {}
+                        Ok(false) => continue,
+                        Err(error) => {
+                            tracing::error!(%error, %trade_id, "annulation J+5 en échec");
+                            continue;
+                        }
+                    }
+                    release_payments_if_any(state, trade_id).await;
+                    notify_shipping_cancelled(state, trade_id).await;
+                    report.shipping_cancelled += 1;
+                } else {
+                    let culprit = infra::shipping_repo::undropped_sender(&state.pool, trade_id)
+                        .await
+                        .ok()
+                        .flatten();
+                    match infra::shipping_repo::freeze_trade(&state.pool, trade_id).await {
+                        Ok(true) => {}
+                        _ => continue,
+                    }
+                    if let Err(error) = infra::shipping_repo::record_dispute_event(
+                        &state.pool,
+                        trade_id,
+                        "non_depot",
+                        culprit,
+                        Some("un seul colis expédié à J+5"),
+                    )
+                    .await
+                    {
+                        tracing::error!(%error, %trade_id, "journal de litige en échec");
+                    }
+                    release_payments_if_any(state, trade_id).await;
+                    notify_frozen_trade(state, trade_id, "un seul colis expédié à J+5").await;
+                    report.shipping_frozen += 1;
+                }
+            }
+        }
+        Err(error) => tracing::error!(%error, "recherche des dépôts en retard en échec"),
+    }
+
+    // Filet J+21 : trocs envoi zombies → gel pour examen manuel.
+    match infra::shipping_repo::stale_shipping_trades(&state.pool, expedition::GEL_TROC_ENVOI_JOURS)
+        .await
+    {
+        Ok(trade_ids) => {
+            for trade_id in trade_ids {
+                match infra::shipping_repo::freeze_trade(&state.pool, trade_id).await {
+                    Ok(true) => {
+                        if let Err(error) = infra::shipping_repo::record_dispute_event(
+                            &state.pool,
+                            trade_id,
+                            "troc_envoi_bloque",
+                            None,
+                            Some("toujours ouvert à J+21"),
+                        )
+                        .await
+                        {
+                            tracing::error!(%error, %trade_id, "journal de litige en échec");
+                        }
+                        notify_frozen_trade(state, trade_id, "troc envoi toujours ouvert à J+21")
+                            .await;
+                        report.shipping_frozen += 1;
+                    }
+                    Ok(false) => {}
+                    Err(error) => tracing::error!(%error, %trade_id, "gel J+21 en échec"),
+                }
+            }
+        }
+        Err(error) => tracing::error!(%error, "recherche des trocs envoi bloqués en échec"),
+    }
+}
+
+/// E-mails d'annulation J+5 (aucun colis déposé).
+async fn notify_shipping_cancelled(state: &AppState, trade_id: Uuid) {
+    telemetry::track(
+        state,
+        "trade_auto_cancelled",
+        None,
+        json!({"trade_id": trade_id, "reason": "aucun_depot"}),
+    )
+    .await;
+    if let Ok(Some(trade)) = infra::trade_repo::get_trade(&state.pool, trade_id).await {
+        for (me, other) in [
+            (trade.proposer_id, trade.recipient_id),
+            (trade.recipient_id, trade.proposer_id),
+        ] {
+            let user = infra::auth_repo::find_user_by_id(&state.pool, me)
+                .await
+                .ok()
+                .flatten();
+            let other_pseudo = infra::auth_repo::find_user_by_id(&state.pool, other)
+                .await
+                .ok()
+                .flatten()
+                .map(|u| u.pseudo)
+                .unwrap_or_default();
+            if let Some(user) = user {
+                if let Err(error) = state
+                    .mailer
+                    .send_shipping_failed(&user.email, &user.pseudo, &other_pseudo, false)
+                    .await
+                {
+                    tracing::error!(%error, %trade_id, "e-mail d'annulation envoi en échec");
+                }
+            }
+        }
+    }
 }

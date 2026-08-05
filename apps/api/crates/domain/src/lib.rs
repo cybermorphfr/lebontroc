@@ -9,4 +9,5 @@ pub mod catalog;
 pub mod health;
 pub mod moderation;
 pub mod payment;
+pub mod shipping;
 pub mod trade;

@@ -15,9 +15,9 @@ const MODES = [
   },
   {
     value: "envoi",
-    label: "Par envoi — bientôt",
-    hint: "L'envoi arrive après la bêta. En attendant : main propre.",
-    disabled: true,
+    label: "Par envoi (point relais)",
+    hint: "Chacun expédie son colis : S 4,50 € · M 6,90 € · L 9,90 € + 2 € de service par personne.",
+    disabled: false,
   },
 ];
 

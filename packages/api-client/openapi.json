@@ -1590,6 +1590,228 @@
         }
       }
     },
+    "/shipments/{id}/confirm": {
+      "post": {
+        "tags": [
+          "trade"
+        ],
+        "summary": "Tout est OK : je confirme le colis reçu. Les deux confirmations\nfinalisent le troc et capturent les règlements (Gherkin F4.3).",
+        "operationId": "confirm_parcel",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant du colis",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Réception confirmée",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeDetailResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Colis pas encore retiré",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/shipments/{id}/drop": {
+      "post": {
+        "tags": [
+          "trade"
+        ],
+        "summary": "J'ai déposé mon colis au point relais. Le simulateur de la bêta le fait\n« arriver » immédiatement chez le destinataire.",
+        "operationId": "drop_parcel",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant du colis",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dépôt enregistré",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeDetailResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Pas d'étiquette ou déjà déposé",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/shipments/{id}/pickup": {
+      "post": {
+        "tags": [
+          "trade"
+        ],
+        "summary": "J'ai récupéré le colis au relais — la fenêtre de 72 h démarre.",
+        "operationId": "pickup_parcel",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant du colis",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Retrait enregistré",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeDetailResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Colis pas encore arrivé",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/shipments/{id}/report": {
+      "post": {
+        "tags": [
+          "trade"
+        ],
+        "summary": "Un problème avec le colis reçu : le troc est gelé pour examen manuel,\nles règlements restent séquestrés (ni capturés ni libérés).",
+        "operationId": "report_parcel",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant du colis",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportIssueRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Signalement enregistré, troc gelé",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeDetailResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Trop tôt ou trop tard pour signaler",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/trades/{id}": {
       "get": {
         "tags": [
@@ -1754,7 +1976,7 @@
         "tags": [
           "trade"
         ],
-        "summary": "Préautoriser la soulte (F4.2) — réservé au payeur, tant que la date\nlimite n'est pas dépassée. Bêta fermée : PSP simulé, aucune carte réelle.",
+        "summary": "Préautoriser mon règlement (soulte F4.2 et/ou frais d'envoi F4.3) —\nréservé au payeur, tant que la date limite n'est pas dépassée. Bêta\nfermée : PSP simulé, aucune carte réelle.",
         "operationId": "pay_trade",
         "parameters": [
           {
@@ -1780,7 +2002,7 @@
         },
         "responses": {
           "200": {
-            "description": "Soulte séquestrée (ou déjà séquestrée)",
+            "description": "Règlement séquestré (ou déjà séquestré)",
             "content": {
               "application/json": {
                 "schema": {
@@ -1790,7 +2012,116 @@
             }
           },
           "400": {
-            "description": "Refus, délai dépassé ou pas de soulte",
+            "description": "Refus, délai dépassé ou rien à payer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/trades/{id}/relays": {
+      "get": {
+        "tags": [
+          "trade"
+        ],
+        "summary": "Les points relais proches de chez moi (pour recevoir l'autre colis).",
+        "operationId": "trade_relays",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant du troc",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Relais proposés",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RelayResponse"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/trades/{id}/shipping": {
+      "post": {
+        "tags": [
+          "trade"
+        ],
+        "summary": "Configurer mon envoi : le format de MON colis (fixe mon transport) et le\nrelais où je recevrai le sien. Modifiable tant que je n'ai pas payé.",
+        "operationId": "configure_shipping",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant du troc",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigureShippingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Envoi configuré",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeDetailResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Format ou relais invalide, ou trop tard",
             "content": {
               "application/json": {
                 "schema": {
@@ -1922,6 +2253,24 @@
             ],
             "format": "int32",
             "description": "Fourchette indicative en centimes (héritée de la racine)."
+          }
+        }
+      },
+      "ConfigureShippingRequest": {
+        "type": "object",
+        "description": "Configuration de « mon envoi » : format de mon colis, relais de réception.",
+        "required": [
+          "format",
+          "relay_code"
+        ],
+        "properties": {
+          "format": {
+            "type": "string",
+            "description": "`s` (≤ 1 kg), `m` (≤ 3 kg) ou `l` (≤ 10 kg)."
+          },
+          "relay_code": {
+            "type": "string",
+            "description": "Code d'un relais renvoyé par GET /trades/{id}/relays."
           }
         }
       },
@@ -2467,10 +2816,13 @@
       },
       "PaymentInfo": {
         "type": "object",
-        "description": "L'état du paiement de la soulte d'un troc.",
+        "description": "L'état d'un paiement du troc (soulte et/ou frais d'envoi).",
         "required": [
           "status",
           "amount_cents",
+          "shipping_cents",
+          "service_cents",
+          "cash_cents",
           "fees_cents",
           "net_cents",
           "i_am_payer",
@@ -2480,7 +2832,12 @@
           "amount_cents": {
             "type": "integer",
             "format": "int32",
-            "description": "La soulte, en centimes."
+            "description": "Total à préautoriser, en centimes (transport + service + soulte)."
+          },
+          "cash_cents": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Part soulte."
           },
           "deadline": {
             "type": "string",
@@ -2514,6 +2871,16 @@
               "null"
             ],
             "description": "Authentification 3DS à ouvrir, le cas échéant (flux PSP réel)."
+          },
+          "service_cents": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Frais de service Lebontroc (mode envoi)."
+          },
+          "shipping_cents": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Part transport (mode envoi ; 0 tant que le format n'est pas choisi)."
           },
           "status": {
             "type": "string",
@@ -2730,6 +3097,26 @@
           }
         }
       },
+      "RelayResponse": {
+        "type": "object",
+        "description": "Un point relais proposé.",
+        "required": [
+          "code",
+          "name",
+          "address"
+        ],
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "ReplacePhotosRequest": {
         "type": "object",
         "required": [
@@ -2743,6 +3130,18 @@
               "format": "uuid"
             },
             "description": "Liste ordonnée (1–8) : photos déjà rattachées et/ou nouveaux uploads."
+          }
+        }
+      },
+      "ReportIssueRequest": {
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "description": "Ce qui ne va pas (500 caractères max)."
           }
         }
       },
@@ -2825,6 +3224,104 @@
           }
         }
       },
+      "ShipmentInfo": {
+        "type": "object",
+        "description": "Un colis du troc, vu par le lecteur.",
+        "required": [
+          "id",
+          "i_am_sender",
+          "status"
+        ],
+        "properties": {
+          "arrived_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "confirmation_deadline": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Fin de la fenêtre de signalement (72 h après le retrait)."
+          },
+          "confirmed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "drop_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Code à présenter au comptoir — visible par l'expéditeur seulement."
+          },
+          "dropped_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "format": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Format forfaitaire (`s`, `m`, `l`) choisi par l'expéditeur."
+          },
+          "i_am_sender": {
+            "type": "boolean",
+            "description": "C'est MON colis à envoyer (sinon : celui que je reçois)."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "issue_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "picked_up_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "relay_address": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "relay_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Relais de destination (choisi par le destinataire du colis)."
+          },
+          "relay_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "description": "`preparation`, `etiquette`, `depose`, `transit`, `arrive`, `retire`,\n`confirme`, `incident` ou `annule`."
+          }
+        }
+      },
       "SignupRequest": {
         "type": "object",
         "required": [
@@ -2893,7 +3390,8 @@
           "other_confirmed",
           "cancel_requested_by_me",
           "cancel_requested_by_other",
-          "accepted_at"
+          "accepted_at",
+          "shipments"
         ],
         "properties": {
           "accepted_at": {
@@ -2944,6 +3442,13 @@
             "type": "boolean",
             "description": "L'autre a saisi mon code."
           },
+          "other_payment_status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Mode envoi : l'état du paiement de l'autre partie."
+          },
           "payment": {
             "oneOf": [
               {
@@ -2951,13 +3456,20 @@
               },
               {
                 "$ref": "#/components/schemas/PaymentInfo",
-                "description": "Le paiement de la soulte, si le troc en comporte une."
+                "description": "MON paiement s'il y en a un à ma charge, sinon celui de l'autre\n(main propre avec soulte vue par le bénéficiaire)."
               }
             ]
           },
           "proposal_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "shipments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ShipmentInfo"
+            },
+            "description": "Mode envoi : les deux colis (le mien à envoyer, celui que je reçois)."
           },
           "status": {
             "type": "string",

@@ -21,6 +21,7 @@ use infra::email::EmailSender;
 use infra::payment::{FakePaymentProvider, PaymentProvider};
 use infra::s3::PhotoStore;
 use infra::search::{PgSearchRepository, SearchRepository};
+use infra::shipping::{FakeShippingProvider, ShippingProvider};
 use sqlx::PgPool;
 use tokio::sync::broadcast;
 use tower::ServiceBuilder;
@@ -45,6 +46,8 @@ pub struct AppState {
     /// PSP derrière un trait : simulateur en bêta fermée, Mangopay sandbox
     /// dès que les clés existent — sans toucher aux handlers.
     pub payments: Arc<dyn PaymentProvider>,
+    /// Transporteur derrière un trait : simulateur en bêta, Boxtal ensuite.
+    pub shipping: Arc<dyn ShippingProvider>,
 }
 
 impl AppState {
@@ -66,6 +69,7 @@ impl AppState {
             search,
             events,
             payments: Arc::new(FakePaymentProvider::new()),
+            shipping: Arc::new(FakeShippingProvider::new()),
         }
     }
 
