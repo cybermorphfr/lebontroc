@@ -145,8 +145,8 @@ export function ProposalComposer({
                 meilleur objet de l&apos;échange.
               </p>
               <p className="rounded-2xl bg-terracotta-100/60 px-3 py-2 text-xs text-terracotta-800">
-                Pendant la bêta, un troc avec soulte peut se négocier mais pas encore se
-                conclure — le paiement sécurisé arrive bientôt.
+                La soulte est sécurisée : bloquée sur la carte à l&apos;acceptation, elle
+                n&apos;est transférée qu&apos;une fois la remise confirmée par vos deux codes.
               </p>
             </div>
           ) : (

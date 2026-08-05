@@ -1749,6 +1749,69 @@
         }
       }
     },
+    "/trades/{id}/pay": {
+      "post": {
+        "tags": [
+          "trade"
+        ],
+        "summary": "Préautoriser la soulte (F4.2) — réservé au payeur, tant que la date\nlimite n'est pas dépassée. Bêta fermée : PSP simulé, aucune carte réelle.",
+        "operationId": "pay_trade",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant du troc",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PayTradeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Soulte séquestrée (ou déjà séquestrée)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeDetailResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Refus, délai dépassé ou pas de soulte",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/troqueurs/{pseudo}": {
       "get": {
         "tags": [
@@ -2389,6 +2452,75 @@
           }
         }
       },
+      "PayTradeRequest": {
+        "type": "object",
+        "description": "Préautorisation de la soulte (F4.2). Bêta fermée : paiement simulé —\nn'importe quel numéro plausible réussit, sauf les cartes magiques d'échec.",
+        "required": [
+          "card_number"
+        ],
+        "properties": {
+          "card_number": {
+            "type": "string",
+            "description": "Numéro de carte (espaces acceptés)."
+          }
+        }
+      },
+      "PaymentInfo": {
+        "type": "object",
+        "description": "L'état du paiement de la soulte d'un troc.",
+        "required": [
+          "status",
+          "amount_cents",
+          "fees_cents",
+          "net_cents",
+          "i_am_payer",
+          "deadline"
+        ],
+        "properties": {
+          "amount_cents": {
+            "type": "integer",
+            "format": "int32",
+            "description": "La soulte, en centimes."
+          },
+          "deadline": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Date limite de préautorisation — passée, le troc est annulé."
+          },
+          "failure_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Motif du dernier refus (`carte_refusee`, `provision_insuffisante`…)."
+          },
+          "fees_cents": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Commission plateforme (0 en bêta), prélevée sur le montant capturé."
+          },
+          "i_am_payer": {
+            "type": "boolean",
+            "description": "Le lecteur est-il celui qui paie ?"
+          },
+          "net_cents": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Ce que le bénéficiaire reçoit."
+          },
+          "secure_mode_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Authentification 3DS à ouvrir, le cas échéant (flux PSP réel)."
+          },
+          "status": {
+            "type": "string",
+            "description": "`en_attente`, `echoue`, `sequestre`, `capture`, `annule` ou `expire`."
+          }
+        }
+      },
       "PresignFile": {
         "type": "object",
         "required": [
@@ -2806,11 +2938,22 @@
               "string",
               "null"
             ],
-            "description": "Mon code de confirmation (à montrer en QR / 6 chiffres)."
+            "description": "Mon code de confirmation (à montrer en QR / 6 chiffres) — masqué tant\nque la soulte n'est pas séquestrée."
           },
           "other_confirmed": {
             "type": "boolean",
             "description": "L'autre a saisi mon code."
+          },
+          "payment": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PaymentInfo",
+                "description": "Le paiement de la soulte, si le troc en comporte une."
+              }
+            ]
           },
           "proposal_id": {
             "type": "string",
@@ -2818,7 +2961,7 @@
           },
           "status": {
             "type": "string",
-            "description": "`accepte`, `finalise` ou `annule`."
+            "description": "`attente_paiement`, `accepte`, `finalise` ou `annule`."
           }
         }
       },
@@ -2840,7 +2983,7 @@
           },
           "status": {
             "type": "string",
-            "description": "`accepte`, `finalise` ou `annule`."
+            "description": "`attente_paiement`, `accepte`, `finalise` ou `annule`."
           }
         }
       },

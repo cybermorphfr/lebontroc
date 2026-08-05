@@ -237,12 +237,18 @@ pub enum AcceptOutcome {
 /// disponibilité, passage en `reserve`, création du Trade, caducité des
 /// propositions concurrentes. Deux acceptations simultanées visant le même
 /// objet : la seconde attend le verrou, voit `reserve`, échoue proprement.
+///
+/// Avec soulte (F4.2), `payment` est fourni : le troc naît en
+/// `attente_paiement`, le paiement est créé dans la même transaction, et la
+/// caducité des concurrentes est DIFFÉRÉE au séquestre — tant que la soulte
+/// n'est pas réglée, les autres propositions gardent leur chance.
 pub async fn accept_proposal(
     pool: &PgPool,
     proposal_id: Uuid,
     recipient_id: Uuid,
     delivery_mode: &str,
     codes: (&str, &str), // (code du proposant, code du destinataire)
+    payment: Option<&crate::payment_repo::NewPayment>,
 ) -> sqlx::Result<AcceptOutcome> {
     let mut tx = pool.begin().await?;
 
@@ -308,15 +314,21 @@ pub async fn accept_proposal(
         .execute(&mut *tx)
         .await?;
 
+    let status = if payment.is_some() {
+        "attente_paiement"
+    } else {
+        "accepte"
+    };
     let trade = sqlx::query_as::<_, Trade>(
-        "INSERT INTO trades (proposal_id, proposer_id, recipient_id, delivery_mode, \
+        "INSERT INTO trades (proposal_id, proposer_id, recipient_id, status, delivery_mode, \
          cash_cents, cash_direction, proposer_code, recipient_code) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
          RETURNING id, proposal_id, status, delivery_mode, cash_cents, cash_direction, created_at",
     )
     .bind(proposal_id)
     .bind(proposal.proposer_id)
     .bind(proposal.recipient_id)
+    .bind(status)
     .bind(delivery_mode)
     .bind(proposal.cash_cents)
     .bind(&proposal.cash_direction)
@@ -325,6 +337,22 @@ pub async fn accept_proposal(
     .fetch_one(&mut *tx)
     .await?;
 
+    if let Some(payment) = payment {
+        sqlx::query(
+            "INSERT INTO payments (trade_id, payer_id, beneficiary_id, amount_cents, \
+             fees_cents, provider, deadline) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind(trade.id)
+        .bind(payment.payer_id)
+        .bind(payment.beneficiary_id)
+        .bind(payment.amount_cents)
+        .bind(payment.fees_cents)
+        .bind(&payment.provider)
+        .bind(payment.deadline)
+        .execute(&mut *tx)
+        .await?;
+    }
+
     sqlx::query("UPDATE proposals SET status = 'acceptee', updated_at = now() WHERE id = $1")
         .bind(proposal_id)
         .execute(&mut *tx)
@@ -332,14 +360,32 @@ pub async fn accept_proposal(
 
     tx.commit().await?;
 
-    // Caducité des propositions concurrentes visant un des objets réservés —
-    // APRÈS le commit, hors transaction : une acceptation concurrente tient
-    // sa proposition en FOR UPDATE pendant qu'elle attend un objet, la rendre
-    // caduque depuis la transaction critique créerait un deadlock. Ici la
-    // gagnante ne tient plus aucun verrou ; l'UPDATE attend simplement le
-    // rollback des perdantes. Idempotent et sans danger en cas de crash :
-    // une proposition zombie échouerait proprement à l'acceptation.
-    let evictions = sqlx::query_as::<_, Eviction>(
+    // Sans soulte, les concurrentes deviennent caduques tout de suite. Avec
+    // soulte, ce serait injuste : si le paiement n'arrive jamais, les objets
+    // seront libérés — les autres propositions doivent rester vivantes. La
+    // caducité se joue alors au séquestre (`payment_repo::escrow_payment`).
+    let evictions = if payment.is_none() {
+        invalidate_competitors(pool, proposal_id, &item_ids).await?
+    } else {
+        Vec::new()
+    };
+
+    Ok(AcceptOutcome::Accepted(trade, evictions))
+}
+
+/// Caducité des propositions concurrentes visant un des objets réservés —
+/// APRÈS le commit, hors transaction : une acceptation concurrente tient
+/// sa proposition en FOR UPDATE pendant qu'elle attend un objet, la rendre
+/// caduque depuis la transaction critique créerait un deadlock. Ici la
+/// gagnante ne tient plus aucun verrou ; l'UPDATE attend simplement le
+/// rollback des perdantes. Idempotent et sans danger en cas de crash :
+/// une proposition zombie échouerait proprement à l'acceptation.
+pub(crate) async fn invalidate_competitors(
+    pool: &PgPool,
+    winner_proposal_id: Uuid,
+    item_ids: &[Uuid],
+) -> sqlx::Result<Vec<Eviction>> {
+    sqlx::query_as::<_, Eviction>(
         "WITH victimes AS ( \
             UPDATE proposals SET status = 'caduque', updated_at = now() \
             WHERE id IN ( \
@@ -354,12 +400,10 @@ pub async fn accept_proposal(
                 u.pseudo::text AS proposer_pseudo \
          FROM victimes v JOIN users u ON u.id = v.proposer_id",
     )
-    .bind(&item_ids)
-    .bind(proposal_id)
+    .bind(item_ids)
+    .bind(winner_proposal_id)
     .fetch_all(pool)
-    .await?;
-
-    Ok(AcceptOutcome::Accepted(trade, evictions))
+    .await
 }
 
 /// Contre-proposition : bascule l'ancienne en `contre_proposee`, crée la
@@ -622,7 +666,7 @@ pub async fn request_cancel(
     }
 }
 
-async fn cancel_trade_in_tx(
+pub(crate) async fn cancel_trade_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     trade_id: Uuid,
     proposal_id: Uuid,

@@ -44,6 +44,7 @@ async fn main() -> anyhow::Result<()> {
 
     let state = AppState::new(pool, version, config, mailer, photos);
     spawn_proposal_expiry(state.clone());
+    spawn_payment_maintenance(state.clone());
     let app = api::router(state);
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;
@@ -108,9 +109,29 @@ fn spawn_proposal_expiry(state: AppState) {
             if count > 0 {
                 tracing::info!(count, "relances de messages non lus envoyées");
             }
-            let (reminded, cancelled) = api::trade::handlers::maintain_trades(&state).await;
-            if reminded > 0 || cancelled > 0 {
-                tracing::info!(reminded, cancelled, "maintenance des trocs");
+            let report = api::trade::handlers::maintain_trades(&state).await;
+            if report != Default::default() {
+                tracing::info!(
+                    reminded = report.reminded,
+                    cancelled = report.cancelled,
+                    payments_expired = report.payments_expired,
+                    captures_retried = report.captures_retried,
+                    "maintenance des trocs"
+                );
+            }
+        }
+    });
+}
+
+/// Les paiements ont une date limite courte (30 min quand le payeur accepte
+/// lui-même) : leur maintenance tourne toutes les 10 minutes.
+fn spawn_payment_maintenance(state: AppState) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(600)).await;
+            let (expired, captures) = api::trade::handlers::maintain_payments(&state).await;
+            if expired > 0 || captures > 0 {
+                tracing::info!(expired, captures, "maintenance des paiements");
             }
         }
     });

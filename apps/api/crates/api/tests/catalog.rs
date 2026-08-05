@@ -1859,8 +1859,8 @@ async fn contre_proposition_remplace_et_garde_la_conversation(pool: PgPool) {
     assert_eq!(fils.len(), 1);
     assert!(fils[0]["body"].as_str().expect("body").contains("soulte"));
 
-    // Pendant la bêta, une contre AVEC soulte se négocie mais ne se conclut
-    // pas (garde F4.1) : l'acceptation est bloquée avec un message clair.
+    // F4.2 : la contre AVEC soulte s'accepte — le troc naît en attente du
+    // paiement de Bob (la soulte est à sa charge).
     let response = call(
         &app,
         request(
@@ -1871,11 +1871,10 @@ async fn contre_proposition_remplace_et_garde_la_conversation(pool: PgPool) {
         ),
     )
     .await;
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    assert_eq!(
-        body_json(response).await["error"]["code"],
-        "soulte_indisponible"
-    );
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = body_json(response).await;
+    assert_eq!(json["status"], "acceptee");
+    assert_eq!(json["trade"]["status"], "attente_paiement");
 }
 
 // ————— Remise en main propre (F4.1) —————
@@ -1992,55 +1991,50 @@ async fn finalisation_croisee_par_codes(pool: PgPool) {
     assert!(statuses.iter().all(|(s,)| s == "troque"));
 }
 
+/// Envoie une proposition avec soulte et retourne son id.
+async fn cash_proposal(
+    app: &Router,
+    proposer: &str,
+    offered: &str,
+    requested: &str,
+    cash_cents: i32,
+    cash_direction: &str,
+) -> String {
+    let response = call(
+        app,
+        request(
+            "POST",
+            "/proposals",
+            Some(serde_json::json!({
+                "offered_item_ids": [offered], "requested_item_ids": [requested],
+                "cash_cents": cash_cents, "cash_direction": cash_direction
+            })),
+            Some(proposer),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    body_json(response).await["id"]
+        .as_str()
+        .expect("id")
+        .to_string()
+}
+
 #[sqlx::test(migrations = "../../migrations")]
-async fn gardes_beta_soulte_et_envoi(pool: PgPool) {
+async fn garde_beta_envoi(pool: PgPool) {
     let (app, emails) = app(pool);
     let alice = verified_user_at(&app, &emails, "f4@exemple.fr", "falice2", "44300").await;
     let velo = publish_valued(&app, &alice, "Vélo bêta", 15_000).await;
     let bob = verified_user(&app, &emails, "f5@exemple.fr", "fbob2").await;
     let jeu = publish_valued(&app, &bob, "Jeu bêta", 4_000).await;
+    let id = cash_proposal(&app, &bob, &jeu, &velo, 2000, "du_proposant").await;
 
-    // Proposition AVEC soulte : négociable, mais pas acceptable pendant la bêta.
+    // L'envoi n'est pas encore finalisable (F4.3).
     let response = call(
         &app,
         request(
             "POST",
-            "/proposals",
-            Some(serde_json::json!({
-                "offered_item_ids": [jeu], "requested_item_ids": [velo],
-                "cash_cents": 2000, "cash_direction": "du_proposant"
-            })),
-            Some(&bob),
-        ),
-    )
-    .await;
-    assert_eq!(response.status(), StatusCode::CREATED);
-    let avec_soulte = body_json(response).await["id"]
-        .as_str()
-        .expect("id")
-        .to_string();
-    let response = call(
-        &app,
-        request(
-            "POST",
-            &format!("/proposals/{avec_soulte}/accept"),
-            Some(serde_json::json!({"delivery_mode": "main_propre"})),
-            Some(&alice),
-        ),
-    )
-    .await;
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    assert_eq!(
-        body_json(response).await["error"]["code"],
-        "soulte_indisponible"
-    );
-
-    // L'envoi n'est pas encore finalisable non plus.
-    let response = call(
-        &app,
-        request(
-            "POST",
-            &format!("/proposals/{avec_soulte}/accept"),
+            &format!("/proposals/{id}/accept"),
             Some(serde_json::json!({"delivery_mode": "envoi"})),
             Some(&alice),
         ),
@@ -2120,16 +2114,29 @@ async fn rendez_vous_fantome_relance_puis_annulation(pool: PgPool) {
     let proposal = simple_proposal(&app, &bob, &jeu, &velo).await;
     let trade = accepted_trade(&app, &alice, &proposal).await;
 
+    use api::trade::handlers::MaintenanceReport;
     // Rien à faire tant que le troc est récent.
-    assert_eq!(api::trade::handlers::maintain_trades(&state).await, (0, 0));
+    assert_eq!(
+        api::trade::handlers::maintain_trades(&state).await,
+        MaintenanceReport::default()
+    );
 
     // J+8 : relance des deux parties, une seule fois.
     sqlx::query("UPDATE trades SET created_at = now() - interval '8 days'")
         .execute(&pool)
         .await
         .expect("antidatage");
-    assert_eq!(api::trade::handlers::maintain_trades(&state).await, (2, 0));
-    assert_eq!(api::trade::handlers::maintain_trades(&state).await, (0, 0));
+    assert_eq!(
+        api::trade::handlers::maintain_trades(&state).await,
+        MaintenanceReport {
+            reminded: 2,
+            ..Default::default()
+        }
+    );
+    assert_eq!(
+        api::trade::handlers::maintain_trades(&state).await,
+        MaintenanceReport::default()
+    );
     {
         let emails = emails.lock().expect("verrou");
         assert!(emails
@@ -2144,7 +2151,13 @@ async fn rendez_vous_fantome_relance_puis_annulation(pool: PgPool) {
         .execute(&pool)
         .await
         .expect("antidatage");
-    assert_eq!(api::trade::handlers::maintain_trades(&state).await, (0, 1));
+    assert_eq!(
+        api::trade::handlers::maintain_trades(&state).await,
+        MaintenanceReport {
+            cancelled: 1,
+            ..Default::default()
+        }
+    );
     let json = body_json(
         call(
             &app,
@@ -2166,4 +2179,442 @@ async fn rendez_vous_fantome_relance_puis_annulation(pool: PgPool) {
         let emails = emails.lock().expect("verrou");
         assert!(emails.last().expect("e-mail").subject.contains("annulé"));
     }
+}
+
+// ————— Soulte séquestrée (F4.2) —————
+
+/// GET du troc, en tant que `who`.
+async fn trade_view(app: &Router, who: &str, trade: &str) -> serde_json::Value {
+    body_json(
+        call(
+            app,
+            request("GET", &format!("/trades/{trade}"), None, Some(who)),
+        )
+        .await,
+    )
+    .await
+}
+
+/// POST /pay avec un numéro de carte.
+async fn pay(app: &Router, who: &str, trade: &str, card: &str) -> axum::response::Response {
+    call(
+        app,
+        request(
+            "POST",
+            &format!("/trades/{trade}/pay"),
+            Some(serde_json::json!({"card_number": card})),
+            Some(who),
+        ),
+    )
+    .await
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn soulte_parcours_complet(pool: PgPool) {
+    let (app, emails) = app(pool.clone());
+    let alice = verified_user_at(&app, &emails, "p1@exemple.fr", "palice1", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo à soulte", 15_000).await;
+    let bob = verified_user(&app, &emails, "p2@exemple.fr", "pbob1").await;
+    let jeu = publish_valued(&app, &bob, "Jeu à soulte", 4_000).await;
+    let carole = verified_user(&app, &emails, "p3@exemple.fr", "pcarole1").await;
+    let puzzle = publish_valued(&app, &carole, "Puzzle concurrent", 4_000).await;
+
+    // Bob propose jeu + 20 € contre le vélo ; Carole vise le même vélo.
+    let p_bob = cash_proposal(&app, &bob, &jeu, &velo, 2_000, "du_proposant").await;
+    let p_carole = simple_proposal(&app, &carole, &puzzle, &velo).await;
+
+    // Alice accepte : le troc naît en attente du paiement de Bob (24 h,
+    // le payeur n'est pas l'accepteur).
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/proposals/{p_bob}/accept"),
+            Some(serde_json::json!({"delivery_mode": "main_propre"})),
+            Some(&alice),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let trade = body_json(response).await["trade"]["id"]
+        .as_str()
+        .expect("trade id")
+        .to_string();
+
+    let vue = trade_view(&app, &alice, &trade).await;
+    assert_eq!(vue["status"], "attente_paiement");
+    assert!(vue["my_code"].is_null(), "code masqué avant séquestre");
+    let paiement = &vue["payment"];
+    assert_eq!(paiement["status"], "en_attente");
+    assert_eq!(paiement["amount_cents"], 2_000);
+    assert_eq!(paiement["fees_cents"], 0);
+    assert_eq!(paiement["net_cents"], 2_000);
+    assert_eq!(paiement["i_am_payer"], false);
+    assert_eq!(
+        trade_view(&app, &bob, &trade).await["payment"]["i_am_payer"],
+        true
+    );
+    // Bob (payeur absent au moment de l'acceptation) est prévenu par e-mail.
+    {
+        let emails = emails.lock().expect("verrou");
+        assert!(emails.last().expect("e-mail").subject.contains("soulte"));
+    }
+    // Deadline ~24 h.
+    let (minutes,): (f64,) = sqlx::query_as(
+        "SELECT (EXTRACT(EPOCH FROM deadline - now()) / 60)::float8 FROM payments \
+         WHERE trade_id = $1::uuid",
+    )
+    .bind(&trade)
+    .fetch_one(&pool)
+    .await
+    .expect("deadline");
+    assert!((23.0 * 60.0..=24.0 * 60.0).contains(&minutes), "{minutes}");
+
+    // Pas de remise possible avant le séquestre.
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/trades/{trade}/confirm"),
+            Some(serde_json::json!({"code": "123456"})),
+            Some(&alice),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body_json(response).await["error"]["code"], "troc_clos");
+
+    // La concurrente de Carole reste vivante tant que rien n'est payé.
+    let vue_carole = body_json(
+        call(
+            &app,
+            request(
+                "GET",
+                &format!("/proposals/{p_carole}"),
+                None,
+                Some(&carole),
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(vue_carole["status"], "envoyee");
+
+    // Seul le payeur peut payer ; la carte magique 0002 est refusée.
+    let response = pay(&app, &alice, &trade, "4970 0000 0000 0000").await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body_json(response).await["error"]["code"], "pas_le_payeur");
+    let response = pay(&app, &bob, &trade, "4970 0000 0000 0002").await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body_json(response).await["error"]["code"],
+        "paiement_refuse"
+    );
+    let vue = trade_view(&app, &bob, &trade).await;
+    assert_eq!(vue["payment"]["status"], "echoue");
+    assert_eq!(vue["payment"]["failure_reason"], "carte_refusee");
+
+    // Retentable : la bonne carte séquestre, le troc s'active, les codes
+    // apparaissent, la concurrente devient caduque.
+    let response = pay(&app, &bob, &trade, "4970 0000 0000 0000").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let vue = body_json(response).await;
+    assert_eq!(vue["status"], "accepte");
+    assert_eq!(vue["payment"]["status"], "sequestre");
+    let code_bob = vue["my_code"].as_str().expect("code bob").to_string();
+    {
+        let emails = emails.lock().expect("verrou");
+        let subjects: Vec<&str> = emails.iter().map(|e| e.subject.as_str()).collect();
+        assert!(
+            subjects.iter().any(|s| s.contains("sécurisée")),
+            "séquestre"
+        );
+        assert!(
+            subjects.iter().any(|s| s.contains("vient d'être réservé")),
+            "éviction de Carole : {subjects:?}"
+        );
+    }
+    let vue_carole = body_json(
+        call(
+            &app,
+            request(
+                "GET",
+                &format!("/proposals/{p_carole}"),
+                None,
+                Some(&carole),
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(vue_carole["status"], "caduque");
+
+    // Rejouer le paiement ne change rien (idempotence).
+    let response = pay(&app, &bob, &trade, "4970 0000 0000 0000").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_json(response).await["payment"]["status"], "sequestre");
+
+    // Gherkin : à la double confirmation, la soulte est capturée.
+    let code_alice = trade_view(&app, &alice, &trade).await["my_code"]
+        .as_str()
+        .expect("code alice")
+        .to_string();
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/trades/{trade}/confirm"),
+            Some(serde_json::json!({"code": code_bob})),
+            Some(&alice),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/trades/{trade}/confirm"),
+            Some(serde_json::json!({"code": code_alice})),
+            Some(&bob),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let vue = body_json(response).await;
+    assert_eq!(vue["status"], "finalise");
+    assert_eq!(vue["payment"]["status"], "capture");
+    {
+        let emails = emails.lock().expect("verrou");
+        let subjects: Vec<&str> = emails.iter().map(|e| e.subject.as_str()).collect();
+        assert!(subjects.iter().any(|s| s.contains("transférée")), "bénéf");
+        assert!(subjects.iter().any(|s| s.contains("débitée")), "payeur");
+    }
+    let statuses: Vec<(String,)> =
+        sqlx::query_as("SELECT status FROM items WHERE id IN ($1::uuid, $2::uuid)")
+            .bind(&velo)
+            .bind(&jeu)
+            .fetch_all(&pool)
+            .await
+            .expect("statuts");
+    assert!(statuses.iter().all(|(s,)| s == "troque"));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn soulte_deux_paiements_simultanes(pool: PgPool) {
+    let (app, emails) = app(pool.clone());
+    let alice = verified_user_at(&app, &emails, "p4@exemple.fr", "palice2", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo course", 15_000).await;
+    let bob = verified_user(&app, &emails, "p5@exemple.fr", "pbob2").await;
+    let jeu = publish_valued(&app, &bob, "Jeu course", 4_000).await;
+    let proposal = cash_proposal(&app, &bob, &jeu, &velo, 2_000, "du_proposant").await;
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/proposals/{proposal}/accept"),
+            Some(serde_json::json!({"delivery_mode": "main_propre"})),
+            Some(&alice),
+        ),
+    )
+    .await;
+    let trade = body_json(response).await["trade"]["id"]
+        .as_str()
+        .expect("trade id")
+        .to_string();
+
+    // Double clic simultané : les deux réussissent, une seule transition.
+    let (r1, r2) = tokio::join!(
+        pay(&app, &bob, &trade, "4970 0000 0000 0000"),
+        pay(&app, &bob, &trade, "4970 0000 0000 0000")
+    );
+    assert_eq!(r1.status(), StatusCode::OK);
+    assert_eq!(r2.status(), StatusCode::OK);
+    let vue = trade_view(&app, &bob, &trade).await;
+    assert_eq!(vue["status"], "accepte");
+    assert_eq!(vue["payment"]["status"], "sequestre");
+    {
+        let emails = emails.lock().expect("verrou");
+        let escrow_mails = emails
+            .iter()
+            .filter(|e| e.subject.contains("sécurisée"))
+            .count();
+        assert_eq!(escrow_mails, 1, "un seul e-mail de séquestre");
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn soulte_expiration_paresseuse_a_la_consultation(pool: PgPool) {
+    let (app, emails) = app(pool.clone());
+    let alice = verified_user_at(&app, &emails, "p6@exemple.fr", "palice3", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo expiré", 15_000).await;
+    let bob = verified_user(&app, &emails, "p7@exemple.fr", "pbob3").await;
+    let jeu = publish_valued(&app, &bob, "Jeu expiré", 4_000).await;
+    // Soulte à la charge d'Alice (destinataire) : elle accepte elle-même,
+    // la date limite est courte (30 min).
+    let proposal = cash_proposal(&app, &bob, &jeu, &velo, 2_000, "du_destinataire").await;
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/proposals/{proposal}/accept"),
+            Some(serde_json::json!({"delivery_mode": "main_propre"})),
+            Some(&alice),
+        ),
+    )
+    .await;
+    let trade = body_json(response).await["trade"]["id"]
+        .as_str()
+        .expect("trade id")
+        .to_string();
+    let (minutes,): (f64,) = sqlx::query_as(
+        "SELECT (EXTRACT(EPOCH FROM deadline - now()) / 60)::float8 FROM payments \
+         WHERE trade_id = $1::uuid",
+    )
+    .bind(&trade)
+    .fetch_one(&pool)
+    .await
+    .expect("deadline");
+    assert!((0.0..=30.0).contains(&minutes), "{minutes}");
+
+    // Date limite dépassée : la simple consultation annule le troc.
+    sqlx::query("UPDATE payments SET deadline = now() - interval '1 hour'")
+        .execute(&pool)
+        .await
+        .expect("antidatage");
+    let vue = trade_view(&app, &bob, &trade).await;
+    assert_eq!(vue["status"], "annule");
+    assert_eq!(vue["payment"]["status"], "expire");
+    let statuses: Vec<(String,)> =
+        sqlx::query_as("SELECT status FROM items WHERE id IN ($1::uuid, $2::uuid)")
+            .bind(&velo)
+            .bind(&jeu)
+            .fetch_all(&pool)
+            .await
+            .expect("statuts");
+    assert!(statuses.iter().all(|(s,)| s == "disponible"));
+    {
+        let emails = emails.lock().expect("verrou");
+        assert!(emails
+            .last()
+            .expect("e-mail")
+            .subject
+            .contains("pas été réglée"));
+    }
+    // Payer trop tard échoue proprement.
+    let response = pay(&app, &alice, &trade, "4970 0000 0000 0000").await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body_json(response).await["error"]["code"], "troc_clos");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn soulte_expiration_par_maintenance_et_seconde_chance(pool: PgPool) {
+    let (state, emails) = AppState::for_tests(pool.clone());
+    let app = api::router(state.clone());
+    let alice = verified_user_at(&app, &emails, "p8@exemple.fr", "palice4", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo maintenance", 15_000).await;
+    let bob = verified_user(&app, &emails, "p9@exemple.fr", "pbob4").await;
+    let jeu = publish_valued(&app, &bob, "Jeu maintenance", 4_000).await;
+    let carole = verified_user(&app, &emails, "p10@exemple.fr", "pcarole4").await;
+    let puzzle = publish_valued(&app, &carole, "Puzzle patient", 4_000).await;
+
+    let p_bob = cash_proposal(&app, &bob, &jeu, &velo, 2_000, "du_proposant").await;
+    let p_carole = simple_proposal(&app, &carole, &puzzle, &velo).await;
+    call(
+        &app,
+        request(
+            "POST",
+            &format!("/proposals/{p_bob}/accept"),
+            Some(serde_json::json!({"delivery_mode": "main_propre"})),
+            Some(&alice),
+        ),
+    )
+    .await;
+
+    // Bob ne paie jamais : la maintenance annule le troc.
+    sqlx::query("UPDATE payments SET deadline = now() - interval '1 hour'")
+        .execute(&pool)
+        .await
+        .expect("antidatage");
+    assert_eq!(
+        api::trade::handlers::maintain_payments(&state).await,
+        (1, 0)
+    );
+    assert_eq!(
+        api::trade::handlers::maintain_payments(&state).await,
+        (0, 0)
+    );
+
+    // La caducité avait été différée : la proposition de Carole est toujours
+    // vivante, et le vélo libéré — Alice peut conclure avec elle.
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/proposals/{p_carole}/accept"),
+            Some(serde_json::json!({"delivery_mode": "main_propre"})),
+            Some(&alice),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_json(response).await["trade"]["status"], "accepte");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn soulte_liberee_a_l_annulation_mutuelle(pool: PgPool) {
+    let (app, emails) = app(pool.clone());
+    let alice = verified_user_at(&app, &emails, "p11@exemple.fr", "palice5", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo libéré", 15_000).await;
+    let bob = verified_user(&app, &emails, "p12@exemple.fr", "pbob5").await;
+    let jeu = publish_valued(&app, &bob, "Jeu libéré", 4_000).await;
+    let proposal = cash_proposal(&app, &bob, &jeu, &velo, 2_000, "du_proposant").await;
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/proposals/{proposal}/accept"),
+            Some(serde_json::json!({"delivery_mode": "main_propre"})),
+            Some(&alice),
+        ),
+    )
+    .await;
+    let trade = body_json(response).await["trade"]["id"]
+        .as_str()
+        .expect("trade id")
+        .to_string();
+    let response = pay(&app, &bob, &trade, "4970 0000 0000 0000").await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Annulation d'un commun accord : la préautorisation est libérée.
+    call(
+        &app,
+        request(
+            "POST",
+            &format!("/trades/{trade}/cancel"),
+            None,
+            Some(&alice),
+        ),
+    )
+    .await;
+    let response = call(
+        &app,
+        request("POST", &format!("/trades/{trade}/cancel"), None, Some(&bob)),
+    )
+    .await;
+    let vue = body_json(response).await;
+    assert_eq!(vue["status"], "annule");
+    assert_eq!(vue["payment"]["status"], "annule");
+    {
+        let emails = emails.lock().expect("verrou");
+        assert!(emails.iter().any(|e| e.subject.contains("pas débité")));
+    }
+    let statuses: Vec<(String,)> =
+        sqlx::query_as("SELECT status FROM items WHERE id IN ($1::uuid, $2::uuid)")
+            .bind(&velo)
+            .bind(&jeu)
+            .fetch_all(&pool)
+            .await
+            .expect("statuts");
+    assert!(statuses.iter().all(|(s,)| s == "disponible"));
 }

@@ -51,6 +51,7 @@ use utoipa::{Modify, OpenApi};
         crate::trade::handlers::accept_proposal,
         crate::trade::handlers::counter_proposal,
         crate::trade::handlers::get_trade,
+        crate::trade::handlers::pay_trade,
         crate::trade::handlers::confirm_trade,
         crate::trade::handlers::cancel_trade,
         crate::messaging::handlers::list_messages,

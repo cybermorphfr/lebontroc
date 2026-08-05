@@ -63,6 +63,9 @@ export function MeetupPanel({ trade }: { trade: TradeDetailResponse }) {
     }
   }
 
+  const payment = trade.payment;
+  const paymentEuros = payment ? Math.round(payment.amount_cents / 100) : 0;
+
   if (trade.status === "finalise") {
     return (
       <section className="mt-4 flex flex-col items-start gap-2 rounded-[32px] bg-sauge-100 p-6">
@@ -71,6 +74,13 @@ export function MeetupPanel({ trade }: { trade: TradeDetailResponse }) {
           Les objets ont changé de mains — ils sortent des dressings. Merci d&apos;avoir troqué
           plutôt qu&apos;acheté.
         </p>
+        {payment ? (
+          <p className="text-sm text-sauge-800">
+            {payment.i_am_payer
+              ? `Les ${paymentEuros} € de soulte ont été débités et transférés.`
+              : `Les ${Math.round(payment.net_cents / 100)} € de soulte t'ont été transférés.`}
+          </p>
+        ) : null}
       </section>
     );
   }
@@ -82,6 +92,11 @@ export function MeetupPanel({ trade }: { trade: TradeDetailResponse }) {
           Les objets sont de nouveau disponibles. Rien de grave — le fil regorge d&apos;autres
           trouvailles.
         </p>
+        {payment && payment.i_am_payer ? (
+          <p className="text-sm text-neutre-700">
+            La préautorisation de {paymentEuros} € est libérée — rien ne sera débité.
+          </p>
+        ) : null}
       </section>
     );
   }
@@ -96,6 +111,15 @@ export function MeetupPanel({ trade }: { trade: TradeDetailResponse }) {
           annulé automatiquement.
         </p>
       </div>
+
+      {payment && payment.status === "sequestre" ? (
+        <p className="rounded-3xl bg-sauge-100 px-4 py-2.5 text-sm text-sauge-800">
+          🔒 Soulte de {paymentEuros} € sécurisée —{" "}
+          {payment.i_am_payer
+            ? "elle ne sera débitée qu'à la remise confirmée."
+            : "elle te sera transférée à la remise confirmée."}
+        </p>
+      ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="flex flex-col items-center gap-2 rounded-3xl bg-creme p-4">

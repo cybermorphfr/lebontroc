@@ -18,6 +18,7 @@ use axum::http::Request;
 use axum::routing::get;
 use axum::{Json, Router};
 use infra::email::EmailSender;
+use infra::payment::{FakePaymentProvider, PaymentProvider};
 use infra::s3::PhotoStore;
 use infra::search::{PgSearchRepository, SearchRepository};
 use sqlx::PgPool;
@@ -41,6 +42,9 @@ pub struct AppState {
     pub search: Arc<dyn SearchRepository>,
     /// Diffusion temps réel (WebSocket) — broker en mémoire, mono-processus.
     pub events: broadcast::Sender<messaging::ws::WsEvent>,
+    /// PSP derrière un trait : simulateur en bêta fermée, Mangopay sandbox
+    /// dès que les clés existent — sans toucher aux handlers.
+    pub payments: Arc<dyn PaymentProvider>,
 }
 
 impl AppState {
@@ -61,6 +65,7 @@ impl AppState {
             photos,
             search,
             events,
+            payments: Arc::new(FakePaymentProvider::new()),
         }
     }
 

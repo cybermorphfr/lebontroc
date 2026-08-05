@@ -32,7 +32,7 @@ pub struct ProposalItemResponse {
 #[derive(Serialize, ToSchema)]
 pub struct TradeResponse {
     pub id: Uuid,
-    /// `accepte`, `finalise` ou `annule`.
+    /// `attente_paiement`, `accepte`, `finalise` ou `annule`.
     pub status: String,
     /// `main_propre` ou `envoi` — choisi à l'acceptation.
     pub delivery_mode: String,
@@ -44,15 +44,45 @@ pub struct ConfirmTradeRequest {
     pub code: String,
 }
 
+/// Préautorisation de la soulte (F4.2). Bêta fermée : paiement simulé —
+/// n'importe quel numéro plausible réussit, sauf les cartes magiques d'échec.
+#[derive(Deserialize, ToSchema)]
+pub struct PayTradeRequest {
+    /// Numéro de carte (espaces acceptés).
+    pub card_number: String,
+}
+
+/// L'état du paiement de la soulte d'un troc.
+#[derive(Serialize, ToSchema)]
+pub struct PaymentInfo {
+    /// `en_attente`, `echoue`, `sequestre`, `capture`, `annule` ou `expire`.
+    pub status: String,
+    /// La soulte, en centimes.
+    pub amount_cents: i32,
+    /// Commission plateforme (0 en bêta), prélevée sur le montant capturé.
+    pub fees_cents: i32,
+    /// Ce que le bénéficiaire reçoit.
+    pub net_cents: i32,
+    /// Le lecteur est-il celui qui paie ?
+    pub i_am_payer: bool,
+    /// Date limite de préautorisation — passée, le troc est annulé.
+    pub deadline: DateTime<Utc>,
+    /// Motif du dernier refus (`carte_refusee`, `provision_insuffisante`…).
+    pub failure_reason: Option<String>,
+    /// Authentification 3DS à ouvrir, le cas échéant (flux PSP réel).
+    pub secure_mode_url: Option<String>,
+}
+
 /// L'écran de rendez-vous : mon code à montrer, l'état des confirmations.
 #[derive(Serialize, ToSchema)]
 pub struct TradeDetailResponse {
     pub id: Uuid,
     pub proposal_id: Uuid,
-    /// `accepte`, `finalise` ou `annule`.
+    /// `attente_paiement`, `accepte`, `finalise` ou `annule`.
     pub status: String,
     pub delivery_mode: String,
-    /// Mon code de confirmation (à montrer en QR / 6 chiffres).
+    /// Mon code de confirmation (à montrer en QR / 6 chiffres) — masqué tant
+    /// que la soulte n'est pas séquestrée.
     pub my_code: Option<String>,
     /// J'ai saisi le code de l'autre.
     pub i_confirmed: bool,
@@ -65,6 +95,8 @@ pub struct TradeDetailResponse {
     /// L'autre a demandé l'annulation (à moi de confirmer).
     pub cancel_requested_by_other: bool,
     pub accepted_at: DateTime<Utc>,
+    /// Le paiement de la soulte, si le troc en comporte une.
+    pub payment: Option<PaymentInfo>,
 }
 
 #[derive(Deserialize, ToSchema)]

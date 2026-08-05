@@ -11,6 +11,8 @@ pub struct AppConfig {
     pub app_base_url: String,
     /// Sel du hash des user_id en télémétrie (§0.4).
     pub analytics_salt: String,
+    /// Commission plateforme sur les soultes, en basis points (0 en bêta).
+    pub payment_fees_bps: u16,
 }
 
 impl AppConfig {
@@ -26,6 +28,7 @@ impl AppConfig {
             cookie_secure,
             app_base_url,
             analytics_salt,
+            payment_fees_bps: 0,
         }
     }
 
@@ -42,11 +45,12 @@ impl AppConfig {
             std::env::var("APP_BASE_URL").map_err(|_| anyhow::anyhow!("APP_BASE_URL manquante"))?;
         let analytics_salt = std::env::var("ANALYTICS_SALT")
             .map_err(|_| anyhow::anyhow!("ANALYTICS_SALT manquante"))?;
-        Ok(Self::new(
-            &jwt_secret,
-            cookie_secure,
-            app_base_url,
-            analytics_salt,
-        ))
+        let mut config = Self::new(&jwt_secret, cookie_secure, app_base_url, analytics_salt);
+        if let Ok(bps) = std::env::var("PAYMENT_FEES_BPS") {
+            config.payment_fees_bps = bps
+                .parse()
+                .map_err(|_| anyhow::anyhow!("PAYMENT_FEES_BPS invalide"))?;
+        }
+        Ok(config)
     }
 }
