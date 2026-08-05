@@ -1491,6 +1491,52 @@
         }
       }
     },
+    "/reviews/{id}/reply": {
+      "post": {
+        "tags": [
+          "trade"
+        ],
+        "summary": "Répondre publiquement (une seule fois) à une évaluation publiée reçue.",
+        "operationId": "reply_review",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant de l'évaluation",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewReplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Réponse publiée"
+          },
+          "400": {
+            "description": "Réponse invalide, déjà répondue ou non publiée",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/search": {
       "get": {
         "tags": [
@@ -2069,6 +2115,79 @@
           },
           "404": {
             "description": "Introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/trades/{id}/review": {
+      "post": {
+        "tags": [
+          "trade"
+        ],
+        "summary": "Noter l'autre partie d'un troc finalisé (1–5 + commentaire). Publication\nsimultanée : la note reste sous embargo tant que l'autre n'a pas noté —\nou jusqu'à J+14 (Gherkin anti-représailles).",
+        "operationId": "submit_review",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant du troc",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitReviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Note enregistrée",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeDetailResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Note invalide ou troc non finalisé",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Déjà noté",
             "content": {
               "application/json": {
                 "schema": {
@@ -3070,9 +3189,20 @@
         "required": [
           "pseudo",
           "member_since",
-          "items"
+          "items",
+          "reviews_count",
+          "trades_finalized",
+          "reviews"
         ],
         "properties": {
+          "avg_ship_days": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Délai moyen entre acceptation et dépôt de ses colis, en jours (F4.3)."
+          },
           "city": {
             "type": [
               "string",
@@ -3093,6 +3223,64 @@
             "description": "Date de création du compte (« Troque depuis… »)."
           },
           "pseudo": {
+            "type": "string"
+          },
+          "rating_avg": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Note moyenne publiée (F5.1), absente sans évaluation."
+          },
+          "reviews": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicReviewResponse"
+            },
+            "description": "Évaluations publiées, la plus récente d'abord (50 max)."
+          },
+          "reviews_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "trades_finalized": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "PublicReviewResponse": {
+        "type": "object",
+        "description": "Une évaluation publiée sur un profil.",
+        "required": [
+          "rating",
+          "reviewer_pseudo",
+          "published_at"
+        ],
+        "properties": {
+          "comment": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "published_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "rating": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reply": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Réponse publique du noté, le cas échéant."
+          },
+          "reviewer_pseudo": {
             "type": "string"
           }
         }
@@ -3142,6 +3330,57 @@
           "reason": {
             "type": "string",
             "description": "Ce qui ne va pas (500 caractères max)."
+          }
+        }
+      },
+      "ReviewInfo": {
+        "type": "object",
+        "required": [
+          "id",
+          "rating",
+          "published",
+          "created_at"
+        ],
+        "properties": {
+          "comment": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "published": {
+            "type": "boolean",
+            "description": "Publiée ? (sinon : sous embargo anti-représailles)"
+          },
+          "rating": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reply": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ReviewReplyRequest": {
+        "type": "object",
+        "required": [
+          "reply"
+        ],
+        "properties": {
+          "reply": {
+            "type": "string",
+            "description": "Réponse publique unique du noté (500 caractères max)."
           }
         }
       },
@@ -3349,6 +3588,26 @@
           }
         }
       },
+      "SubmitReviewRequest": {
+        "type": "object",
+        "required": [
+          "rating"
+        ],
+        "properties": {
+          "comment": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Commentaire public (500 caractères max)."
+          },
+          "rating": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Note de 1 à 5."
+          }
+        }
+      },
       "TrackRequest": {
         "type": "object",
         "required": [
@@ -3391,7 +3650,8 @@
           "cancel_requested_by_me",
           "cancel_requested_by_other",
           "accepted_at",
-          "shipments"
+          "shipments",
+          "reviews"
         ],
         "properties": {
           "accepted_at": {
@@ -3464,6 +3724,10 @@
             "type": "string",
             "format": "uuid"
           },
+          "reviews": {
+            "$ref": "#/components/schemas/TradeReviews",
+            "description": "Les évaluations du troc (F5.1), une fois finalisé."
+          },
           "shipments": {
             "type": "array",
             "items": {
@@ -3496,6 +3760,32 @@
           "status": {
             "type": "string",
             "description": "`attente_paiement`, `accepte`, `finalise` ou `annule`."
+          }
+        }
+      },
+      "TradeReviews": {
+        "type": "object",
+        "description": "Les évaluations d'un troc, vues par le lecteur : la sienne (toujours\nvisible pour lui), celle de l'autre seulement une fois publiée.",
+        "properties": {
+          "mine": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReviewInfo"
+              }
+            ]
+          },
+          "received": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReviewInfo"
+              }
+            ]
           }
         }
       },

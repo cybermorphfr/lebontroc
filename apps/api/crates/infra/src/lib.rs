@@ -10,6 +10,7 @@ pub mod favorites_repo;
 pub mod message_repo;
 pub mod payment;
 pub mod payment_repo;
+pub mod review_repo;
 pub mod s3;
 pub mod search;
 pub mod shipping;

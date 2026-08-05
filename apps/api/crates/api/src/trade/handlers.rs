@@ -20,7 +20,8 @@ use crate::telemetry;
 use crate::trade::dto::{
     AcceptProposalRequest, ConfigureShippingRequest, ConfirmTradeRequest, CreateProposalRequest,
     PayTradeRequest, PaymentInfo, ProposalItemResponse, ProposalResponse, RelayResponse,
-    ReportIssueRequest, ShipmentInfo, TradeDetailResponse, TradeResponse,
+    ReportIssueRequest, ReviewInfo, ReviewReplyRequest, ShipmentInfo, SubmitReviewRequest,
+    TradeDetailResponse, TradeResponse, TradeReviews,
 };
 use crate::AppState;
 
@@ -829,10 +830,14 @@ fn trade_detail_response(
         payment: shown.map(|p| payment_info(p, user_id)),
         other_payment_status,
         shipments: shipment_infos,
+        reviews: TradeReviews {
+            mine: None,
+            received: None,
+        },
     }
 }
 
-/// Vue complète du troc : paiements et colis compris.
+/// Vue complète du troc : paiements, colis et évaluations compris.
 async fn full_trade_response(
     state: &AppState,
     trade: infra::trade_repo::TradeDetail,
@@ -844,7 +849,33 @@ async fn full_trade_response(
     } else {
         Vec::new()
     };
-    Ok(trade_detail_response(trade, &payments, &shipments, user_id))
+    let reviews = if trade.status == "finalise" {
+        infra::review_repo::reviews_for_trade(&state.pool, trade.id).await?
+    } else {
+        Vec::new()
+    };
+    let mut response = trade_detail_response(trade, &payments, &shipments, user_id);
+    let to_info = |r: &infra::review_repo::Review| ReviewInfo {
+        id: r.id,
+        rating: r.rating,
+        comment: r.comment.clone(),
+        published: r.published_at.is_some(),
+        reply: r.reply.clone(),
+        created_at: r.created_at,
+    };
+    response.reviews = TradeReviews {
+        // Ma note : toujours visible pour moi. Celle de l'autre : seulement
+        // une fois publiée (embargo anti-représailles).
+        mine: reviews
+            .iter()
+            .find(|r| r.reviewer_id == user_id)
+            .map(to_info),
+        received: reviews
+            .iter()
+            .find(|r| r.reviewee_id == user_id && r.published_at.is_some())
+            .map(to_info),
+    };
+    Ok(response)
 }
 
 async fn participant_trade(
@@ -1450,6 +1481,8 @@ pub struct MaintenanceReport {
     pub shipping_frozen: usize,
     /// Colis confirmés automatiquement (72 h après retrait).
     pub auto_confirmed: usize,
+    /// Évaluations orphelines publiées à J+14 (F5.1).
+    pub reviews_published: usize,
 }
 
 /// Maintenance des trocs : relance J+7, annulation automatique J+14
@@ -1508,6 +1541,29 @@ pub async fn maintain_trades(state: &AppState) -> MaintenanceReport {
     report.captures_retried = captures_retried;
     maintain_shipping(state, &mut report).await;
     report.auto_confirmed = auto_confirm_shipments(state).await;
+
+    // F5.1 — les notes orphelines sont publiées J+14 après la finalisation.
+    match infra::review_repo::publish_overdue_reviews(
+        &state.pool,
+        domain::review::PUBLICATION_JOURS,
+    )
+    .await
+    {
+        Ok(published) => {
+            if published > 0 {
+                telemetry::track(
+                    state,
+                    "review_published",
+                    None,
+                    json!({"count": published, "reason": "deadline"}),
+                )
+                .await;
+            }
+            report.reviews_published = published as usize;
+        }
+        Err(error) => tracing::error!(%error, "publication des évaluations J+14 en échec"),
+    }
+
     report.reminded = reminded;
     report.cancelled = cancelled;
     report
@@ -2175,4 +2231,136 @@ async fn notify_shipping_cancelled(state: &AppState, trade_id: Uuid) {
             }
         }
     }
+}
+
+// ————— Évaluations (F5.1) —————
+
+/// Noter l'autre partie d'un troc finalisé (1–5 + commentaire). Publication
+/// simultanée : la note reste sous embargo tant que l'autre n'a pas noté —
+/// ou jusqu'à J+14 (Gherkin anti-représailles).
+#[utoipa::path(
+    post,
+    path = "/trades/{id}/review",
+    tag = "trade",
+    params(("id" = Uuid, Path, description = "Identifiant du troc")),
+    request_body = SubmitReviewRequest,
+    responses(
+        (status = 200, description = "Note enregistrée", body = TradeDetailResponse),
+        (status = 400, description = "Note invalide ou troc non finalisé", body = crate::error::ErrorResponse),
+        (status = 404, description = "Introuvable", body = crate::error::ErrorResponse),
+        (status = 409, description = "Déjà noté", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn submit_review(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<SubmitReviewRequest>,
+) -> Result<Json<TradeDetailResponse>, ApiError> {
+    let trade = participant_trade(&state, id, user.user_id).await?;
+    let map_review_error = |error: domain::review::ReviewError| match error {
+        domain::review::ReviewError::NoteHorsBornes => {
+            ApiError::bad_request("note_invalide", "La note va de 1 à 5 étoiles.")
+        }
+        domain::review::ReviewError::CommentaireTropLong => ApiError::bad_request(
+            "commentaire_trop_long",
+            "Le commentaire est limité à 500 caractères.",
+        ),
+        domain::review::ReviewError::TrocNonFinalise => {
+            ApiError::bad_request("troc_non_finalise", "On ne note qu'un troc finalisé.")
+        }
+    };
+    domain::review::peut_noter(&trade.status).map_err(map_review_error)?;
+    domain::review::valider_note(body.rating).map_err(map_review_error)?;
+    let comment = body
+        .comment
+        .as_deref()
+        .map(str::trim)
+        .filter(|c| !c.is_empty());
+    if let Some(comment) = comment {
+        domain::review::valider_commentaire(comment).map_err(map_review_error)?;
+    }
+    let reviewee_id = if trade.proposer_id == user.user_id {
+        trade.recipient_id
+    } else {
+        trade.proposer_id
+    };
+    match infra::review_repo::submit_review(
+        &state.pool,
+        id,
+        user.user_id,
+        reviewee_id,
+        body.rating,
+        comment,
+    )
+    .await?
+    {
+        infra::review_repo::SubmitOutcome::AlreadyReviewed => {
+            return Err(ApiError::conflict(
+                "deja_note",
+                "Tu as déjà noté ce troc — une seule évaluation par échange.",
+            ))
+        }
+        infra::review_repo::SubmitOutcome::Created { published, .. } => {
+            telemetry::track(
+                &state,
+                "review_submitted",
+                Some(user.user_id),
+                json!({"trade_id": id, "rating": body.rating, "has_comment": comment.is_some()}),
+            )
+            .await;
+            if published {
+                telemetry::track(
+                    &state,
+                    "review_published",
+                    None,
+                    json!({"trade_id": id, "reason": "both_submitted"}),
+                )
+                .await;
+            }
+            broadcast_event(
+                &state,
+                [trade.proposer_id, trade.recipient_id],
+                json!({"type": "trade_updated", "trade_id": id}),
+            );
+        }
+    }
+    let trade = participant_trade(&state, id, user.user_id).await?;
+    Ok(Json(
+        full_trade_response(&state, trade, user.user_id).await?,
+    ))
+}
+
+/// Répondre publiquement (une seule fois) à une évaluation publiée reçue.
+#[utoipa::path(
+    post,
+    path = "/reviews/{id}/reply",
+    tag = "trade",
+    params(("id" = Uuid, Path, description = "Identifiant de l'évaluation")),
+    request_body = ReviewReplyRequest,
+    responses(
+        (status = 204, description = "Réponse publiée"),
+        (status = 400, description = "Réponse invalide, déjà répondue ou non publiée", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn reply_review(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<ReviewReplyRequest>,
+) -> Result<StatusCode, ApiError> {
+    let reply = body.reply.trim();
+    if reply.is_empty() || reply.chars().count() > domain::review::COMMENTAIRE_MAX {
+        return Err(ApiError::bad_request(
+            "reponse_invalide",
+            "Une réponse fait entre 1 et 500 caractères.",
+        ));
+    }
+    if !infra::review_repo::reply_to_review(&state.pool, id, user.user_id, reply).await? {
+        return Err(ApiError::bad_request(
+            "reponse_impossible",
+            "Cette évaluation n'existe pas, n'est pas publiée, ou a déjà sa réponse.",
+        ));
+    }
+    Ok(StatusCode::NO_CONTENT)
 }

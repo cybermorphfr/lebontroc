@@ -108,6 +108,8 @@ pub struct TradeDetailResponse {
     pub other_payment_status: Option<String>,
     /// Mode envoi : les deux colis (le mien à envoyer, celui que je reçois).
     pub shipments: Vec<ShipmentInfo>,
+    /// Les évaluations du troc (F5.1), une fois finalisé.
+    pub reviews: TradeReviews,
 }
 
 /// Un colis du troc, vu par le lecteur.
@@ -157,6 +159,41 @@ pub struct RelayResponse {
 pub struct ReportIssueRequest {
     /// Ce qui ne va pas (500 caractères max).
     pub reason: String,
+}
+
+// ————— Évaluations (F5.1) —————
+
+#[derive(Deserialize, ToSchema)]
+pub struct SubmitReviewRequest {
+    /// Note de 1 à 5.
+    pub rating: i16,
+    /// Commentaire public (500 caractères max).
+    pub comment: Option<String>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct ReviewReplyRequest {
+    /// Réponse publique unique du noté (500 caractères max).
+    pub reply: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ReviewInfo {
+    pub id: Uuid,
+    pub rating: i16,
+    pub comment: Option<String>,
+    /// Publiée ? (sinon : sous embargo anti-représailles)
+    pub published: bool,
+    pub reply: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Les évaluations d'un troc, vues par le lecteur : la sienne (toujours
+/// visible pour lui), celle de l'autre seulement une fois publiée.
+#[derive(Serialize, ToSchema)]
+pub struct TradeReviews {
+    pub mine: Option<ReviewInfo>,
+    pub received: Option<ReviewInfo>,
 }
 
 #[derive(Deserialize, ToSchema)]

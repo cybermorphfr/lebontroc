@@ -11,6 +11,7 @@ import { STATUS_PROPOSITION } from "@/lib/format";
 import { AcceptButton } from "./AcceptButton";
 import { MeetupPanel } from "./MeetupPanel";
 import { PaymentPanel } from "./PaymentPanel";
+import { ReviewPanel } from "./ReviewPanel";
 import { ShippingPanel } from "./ShippingPanel";
 import { Conversation } from "./Conversation";
 import { RefuseButton } from "./RefuseButton";
@@ -145,6 +146,15 @@ export default async function TrocDetailPage({
           {trade && trade.status !== "attente_paiement" ? <MeetupPanel trade={trade} /> : null}
         </>
       )}
+
+      {trade ? (
+        <ReviewPanel
+          trade={trade}
+          otherPseudo={
+            proposal.is_proposer ? proposal.recipient_pseudo : proposal.proposer_pseudo
+          }
+        />
+      ) : null}
 
       {proposal.superseded_by ? (
         <p className="mt-4 rounded-3xl bg-terracotta-100/60 p-4 text-sm text-terracotta-800">

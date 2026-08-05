@@ -3210,3 +3210,201 @@ async fn envoi_signalement_gele_et_garde_les_fonds(pool: PgPool) {
         assert!(emails.iter().any(|e| e.subject.contains("examen manuel")));
     }
 }
+
+// ————— Évaluations (F5.1) —————
+
+/// Finalise un troc main propre par échange de codes croisés.
+async fn finalized_trade(app: &Router, alice: &str, bob: &str, proposal: &str) -> String {
+    let trade = accepted_trade(app, alice, proposal).await;
+    let code_alice = trade_view(app, alice, &trade).await["my_code"]
+        .as_str()
+        .expect("code")
+        .to_string();
+    let code_bob = trade_view(app, bob, &trade).await["my_code"]
+        .as_str()
+        .expect("code")
+        .to_string();
+    for (who, code) in [(alice, &code_bob), (bob, &code_alice)] {
+        let response = call(
+            app,
+            request(
+                "POST",
+                &format!("/trades/{trade}/confirm"),
+                Some(serde_json::json!({"code": code})),
+                Some(who),
+            ),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    trade
+}
+
+/// Note un troc, en tant que `who`.
+async fn review(
+    app: &Router,
+    who: &str,
+    trade: &str,
+    rating: i16,
+    comment: Option<&str>,
+) -> axum::response::Response {
+    call(
+        app,
+        request(
+            "POST",
+            &format!("/trades/{trade}/review"),
+            Some(serde_json::json!({"rating": rating, "comment": comment})),
+            Some(who),
+        ),
+    )
+    .await
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn evaluation_publication_simultanee_anti_represailles(pool: PgPool) {
+    let (app, emails) = app(pool);
+    let alice = verified_user_at(&app, &emails, "r1@exemple.fr", "ralice1", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo noté", 15_000).await;
+    let bob = verified_user(&app, &emails, "r2@exemple.fr", "rbob1").await;
+    let jeu = publish_valued(&app, &bob, "Jeu noté", 4_000).await;
+    let proposal = simple_proposal(&app, &bob, &jeu, &velo).await;
+
+    // Avant la finalisation : pas de note possible.
+    let trade = accepted_trade(&app, &alice, &proposal).await;
+    let response = review(&app, &alice, &trade, 5, None).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body_json(response).await["error"]["code"],
+        "troc_non_finalise"
+    );
+    // (On repart du même troc, finalisé par codes croisés.)
+    let code_alice = trade_view(&app, &alice, &trade).await["my_code"]
+        .as_str()
+        .expect("code")
+        .to_string();
+    let code_bob = trade_view(&app, &bob, &trade).await["my_code"]
+        .as_str()
+        .expect("code")
+        .to_string();
+    for (who, code) in [(&alice, &code_bob), (&bob, &code_alice)] {
+        call(
+            &app,
+            request(
+                "POST",
+                &format!("/trades/{trade}/confirm"),
+                Some(serde_json::json!({"code": code})),
+                Some(who),
+            ),
+        )
+        .await;
+    }
+
+    // Notes hors bornes refusées ; un tiers n'a pas accès.
+    let response = review(&app, &alice, &trade, 6, None).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let carole = verified_user(&app, &emails, "r3@exemple.fr", "rcarole1").await;
+    let response = review(&app, &carole, &trade, 3, None).await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    // Gherkin : Alice note — sa note reste invisible pour Bob.
+    let response = review(&app, &alice, &trade, 5, Some("Impeccable, merci !")).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let vue = body_json(response).await;
+    assert_eq!(vue["reviews"]["mine"]["rating"], 5);
+    assert_eq!(vue["reviews"]["mine"]["published"], false);
+    assert!(vue["reviews"]["received"].is_null());
+    let vue_bob = trade_view(&app, &bob, &trade).await;
+    assert!(vue_bob["reviews"]["mine"].is_null());
+    assert!(
+        vue_bob["reviews"]["received"].is_null(),
+        "embargo : Bob ne voit rien avant d'avoir noté"
+    );
+    // Une seule note par troc.
+    let response = review(&app, &alice, &trade, 4, None).await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+
+    // Bob note à son tour : publication simultanée.
+    let response = review(&app, &bob, &trade, 4, Some("Bon échange.")).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let vue = body_json(response).await;
+    assert_eq!(vue["reviews"]["mine"]["published"], true);
+    assert_eq!(vue["reviews"]["received"]["rating"], 5);
+    let vue_alice = trade_view(&app, &alice, &trade).await;
+    assert_eq!(vue_alice["reviews"]["received"]["rating"], 4);
+
+    // Le profil public de Bob porte la note reçue et les agrégats.
+    let profil = body_json(call(&app, request("GET", "/troqueurs/rbob1", None, None)).await).await;
+    assert_eq!(profil["rating_avg"], 5.0);
+    assert_eq!(profil["reviews_count"], 1);
+    assert_eq!(profil["trades_finalized"], 1);
+    assert_eq!(profil["reviews"][0]["comment"], "Impeccable, merci !");
+    assert_eq!(profil["reviews"][0]["reviewer_pseudo"], "ralice1");
+
+    // Réponse publique unique du noté.
+    let review_id = trade_view(&app, &bob, &trade).await["reviews"]["received"]["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/reviews/{review_id}/reply"),
+            Some(serde_json::json!({"reply": "Merci, à refaire !"})),
+            Some(&bob),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/reviews/{review_id}/reply"),
+            Some(serde_json::json!({"reply": "Encore moi"})),
+            Some(&bob),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let profil = body_json(call(&app, request("GET", "/troqueurs/rbob1", None, None)).await).await;
+    assert_eq!(profil["reviews"][0]["reply"], "Merci, à refaire !");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn evaluation_orpheline_publiee_a_j14(pool: PgPool) {
+    let (state, emails) = AppState::for_tests(pool.clone());
+    let app = api::router(state.clone());
+    let alice = verified_user_at(&app, &emails, "r4@exemple.fr", "ralice2", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo patient", 15_000).await;
+    let bob = verified_user(&app, &emails, "r5@exemple.fr", "rbob2").await;
+    let jeu = publish_valued(&app, &bob, "Jeu patient", 4_000).await;
+    let proposal = simple_proposal(&app, &bob, &jeu, &velo).await;
+    let trade = finalized_trade(&app, &alice, &bob, &proposal).await;
+
+    // Gherkin : seule Alice note — invisible tant que J+14 n'est pas passé.
+    assert_eq!(
+        review(&app, &alice, &trade, 5, None).await.status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        api::trade::handlers::maintain_trades(&state)
+            .await
+            .reviews_published,
+        0
+    );
+    sqlx::query("UPDATE trades SET finalized_at = now() - interval '15 days'")
+        .execute(&pool)
+        .await
+        .expect("antidatage");
+    assert_eq!(
+        api::trade::handlers::maintain_trades(&state)
+            .await
+            .reviews_published,
+        1
+    );
+    let vue_bob = trade_view(&app, &bob, &trade).await;
+    assert_eq!(vue_bob["reviews"]["received"]["rating"], 5);
+    let profil = body_json(call(&app, request("GET", "/troqueurs/rbob2", None, None)).await).await;
+    assert_eq!(profil["reviews_count"], 1);
+}

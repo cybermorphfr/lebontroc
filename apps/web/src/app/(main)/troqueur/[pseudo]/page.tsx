@@ -81,8 +81,25 @@ export default async function TroqueurPage({
             ) : null}
             <span>· {ancrage(profile.member_since)}</span>
           </p>
-          <div>
-            <Tag variant="accent-2">Nouveau troqueur</Tag>
+          <div className="flex flex-wrap items-center gap-2">
+            {profile.reviews_count > 0 && profile.rating_avg != null ? (
+              <Tag variant="accent-2">
+                ★ {profile.rating_avg.toFixed(1)} · {profile.reviews_count} avis
+              </Tag>
+            ) : profile.trades_finalized === 0 ? (
+              <Tag variant="accent-2">Nouveau troqueur</Tag>
+            ) : null}
+            {profile.trades_finalized > 0 ? (
+              <Tag variant="neutral">
+                {profile.trades_finalized} troc{profile.trades_finalized > 1 ? "s" : ""} finalisé
+                {profile.trades_finalized > 1 ? "s" : ""}
+              </Tag>
+            ) : null}
+            {profile.avg_ship_days != null ? (
+              <Tag variant="neutral">
+                📦 expédie en ~{Math.max(1, Math.round(profile.avg_ship_days))} j
+              </Tag>
+            ) : null}
           </div>
         </div>
       </section>
@@ -131,6 +148,36 @@ export default async function TroqueurPage({
           ))}
         </ul>
       )}
+
+      {profile.reviews.length > 0 ? (
+        <>
+          <h2 className="mt-2 font-display text-xl">Ses évaluations</h2>
+          <ul className="flex flex-col gap-3">
+            {profile.reviews.map((review, index) => (
+              <li
+                key={index}
+                className="flex flex-col gap-1 rounded-3xl bg-sable p-4 shadow-sm"
+              >
+                <p className="flex items-center gap-2 text-sm">
+                  <span className="text-terracotta-500" aria-label={`${review.rating} sur 5`}>
+                    {"★".repeat(review.rating)}
+                    <span className="text-neutre-300">{"★".repeat(5 - review.rating)}</span>
+                  </span>
+                  <span className="font-semibold">{review.reviewer_pseudo}</span>
+                </p>
+                {review.comment ? (
+                  <p className="text-sm text-neutre-700">« {review.comment} »</p>
+                ) : null}
+                {review.reply ? (
+                  <p className="rounded-2xl bg-creme px-3 py-2 text-xs text-neutre-700">
+                    Réponse de {profile.pseudo} : « {review.reply} »
+                  </p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
     </main>
   );
 }

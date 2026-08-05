@@ -733,6 +733,8 @@ pub async fn public_profile(
 
     let city =
         infra::catalog_repo::commune_for_postal_code(&state.pool, &owner.postal_code).await?;
+    let stats = infra::review_repo::profile_stats(&state.pool, owner.id).await?;
+    let reviews = infra::review_repo::published_reviews_for_user(&state.pool, owner.id).await?;
     let items = infra::catalog_repo::list_public_items_by_owner(&state.pool, owner.id).await?;
     let ids: Vec<Uuid> = items.iter().map(|i| i.id).collect();
     let mut photos_by_item: HashMap<Uuid, Vec<infra::catalog_repo::ItemPhoto>> = HashMap::new();
@@ -762,6 +764,20 @@ pub async fn public_profile(
             .map(|item| {
                 let photos = photos_by_item.remove(&item.id).unwrap_or_default();
                 item_response(&state, item, photos)
+            })
+            .collect(),
+        rating_avg: stats.rating_avg,
+        reviews_count: stats.reviews_count,
+        trades_finalized: stats.trades_finalized,
+        avg_ship_days: stats.avg_ship_days,
+        reviews: reviews
+            .into_iter()
+            .map(|r| crate::catalog::dto::PublicReviewResponse {
+                rating: r.rating,
+                comment: r.comment,
+                reply: r.reply,
+                reviewer_pseudo: r.reviewer_pseudo,
+                published_at: r.published_at,
             })
             .collect(),
     }))

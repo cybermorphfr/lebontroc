@@ -105,6 +105,25 @@ pub struct PublicProfileResponse {
     pub member_since: DateTime<Utc>,
     /// Objets disponibles uniquement — jamais les masqués.
     pub items: Vec<ItemResponse>,
+    /// Note moyenne publiée (F5.1), absente sans évaluation.
+    pub rating_avg: Option<f64>,
+    pub reviews_count: i64,
+    pub trades_finalized: i64,
+    /// Délai moyen entre acceptation et dépôt de ses colis, en jours (F4.3).
+    pub avg_ship_days: Option<f64>,
+    /// Évaluations publiées, la plus récente d'abord (50 max).
+    pub reviews: Vec<PublicReviewResponse>,
+}
+
+/// Une évaluation publiée sur un profil.
+#[derive(Serialize, ToSchema)]
+pub struct PublicReviewResponse {
+    pub rating: i16,
+    pub comment: Option<String>,
+    /// Réponse publique du noté, le cas échéant.
+    pub reply: Option<String>,
+    pub reviewer_pseudo: String,
+    pub published_at: DateTime<Utc>,
 }
 
 fn vrai() -> bool {

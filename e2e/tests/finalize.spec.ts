@@ -119,5 +119,20 @@ test("finalisation croisée : codes échangés, troc finalisé, objets troqués"
   await expect(page.getByText("Troqué")).toBeVisible();
   await pageAlice.reload();
   await expect(pageAlice.getByText("Troc finalisé !")).toBeVisible();
+
+  // F5.1 — Alice note 5 : sa note reste sous embargo.
+  await pageAlice.getByRole("radio", { name: "5 étoiles" }).click();
+  await pageAlice.getByLabel("Commentaire").fill("Troc impeccable !");
+  await pageAlice.getByRole("button", { name: "Publier ma note" }).click();
+  await expect(pageAlice.getByText(/sera visible quand/)).toBeVisible();
+
+  // Bob note 4 : publication simultanée, chacun voit la note de l'autre.
+  await page.goto(urlTroc);
+  await page.getByRole("radio", { name: "4 étoiles" }).click();
+  await page.getByRole("button", { name: "Publier ma note" }).click();
+  await expect(page.getByText(/La note de .* :/)).toBeVisible();
+  await expect(page.getByText("« Troc impeccable ! »")).toBeVisible();
+  await pageAlice.reload();
+  await expect(pageAlice.getByText(/La note de .* :/)).toBeVisible();
   await contexteAlice.close();
 });

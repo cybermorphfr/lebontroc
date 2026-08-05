@@ -60,6 +60,8 @@ use utoipa::{Modify, OpenApi};
         crate::trade::handlers::pickup_parcel,
         crate::trade::handlers::confirm_parcel,
         crate::trade::handlers::report_parcel,
+        crate::trade::handlers::submit_review,
+        crate::trade::handlers::reply_review,
         crate::messaging::handlers::list_messages,
         crate::messaging::handlers::send_message,
         crate::messaging::handlers::mark_read,
