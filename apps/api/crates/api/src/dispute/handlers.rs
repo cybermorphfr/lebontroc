@@ -71,6 +71,18 @@ async fn notify_dispute_opened(state: &AppState, trade_id: Uuid, opener_id: Uuid
     let opener = infra::auth_repo::find_user_by_id(&state.pool, opener_id).await;
     let other = infra::auth_repo::find_user_by_id(&state.pool, other_id).await;
     if let (Ok(Some(opener)), Ok(Some(other))) = (opener, other) {
+        crate::notification::handlers::notify(
+            state,
+            other_id,
+            "litige",
+            "Un dossier est ouvert sur ton troc".to_string(),
+            format!(
+                "{} a signalé un problème ({reason}). Tu as 72 h pour donner ta version.",
+                opener.pseudo
+            ),
+            "/trocs".to_string(),
+        )
+        .await;
         if let Err(error) = state
             .mailer
             .send_dispute_opened(&other.email, &other.pseudo, &opener.pseudo, reason)
@@ -560,6 +572,15 @@ pub async fn apply_score_sanctions(state: &AppState, user_id: Uuid) -> regles::S
             )
         }
     };
+    crate::notification::handlers::notify(
+        state,
+        user_id,
+        "litige",
+        "Important — au sujet de ton compte".to_string(),
+        sanction_text.clone(),
+        "/trocs".to_string(),
+    )
+    .await;
     if let Err(error) = state
         .mailer
         .send_sanction(&target.email, &target.pseudo, &sanction_text)
@@ -837,6 +858,15 @@ pub async fn admin_resolve_dispute(
         _ => "le dossier est classé sans suite, le troc reprend son cours normal.",
     };
     for user_id in [trade.proposer_id, trade.recipient_id] {
+        crate::notification::handlers::notify(
+            &state,
+            user_id,
+            "litige",
+            "Ton dossier de litige est tranché".to_string(),
+            format!("L'examen est terminé : {outcome_text}"),
+            "/trocs".to_string(),
+        )
+        .await;
         if let Ok(Some(u)) = infra::auth_repo::find_user_by_id(&state.pool, user_id).await {
             if let Err(error) = state
                 .mailer

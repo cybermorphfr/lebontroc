@@ -74,7 +74,18 @@ fn mailer_from_env() -> anyhow::Result<infra::email::EmailSender> {
     let tls = std::env::var("SMTP_TLS").unwrap_or_else(|_| "none".to_string());
     let from = std::env::var("SMTP_FROM")
         .unwrap_or_else(|_| "Lebontroc <no-reply@lebontroc.brianplus.com>".to_string());
-    infra::email::EmailSender::smtp(&host, port, username, password, &tls, &from)
+    let reply_to = std::env::var("SMTP_REPLY_TO")
+        .ok()
+        .filter(|v| !v.is_empty());
+    infra::email::EmailSender::smtp(
+        &host,
+        port,
+        username,
+        password,
+        &tls,
+        &from,
+        reply_to.as_deref(),
+    )
 }
 
 fn photo_store_from_env() -> anyhow::Result<infra::s3::PhotoStore> {

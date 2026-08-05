@@ -4088,3 +4088,171 @@ async fn signalements_types_valides(pool: PgPool) {
             .any(|e| e.text.contains("signalement utilisateur")));
     }
 }
+
+// ————— Notifications (F5.3) —————
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn notifications_centre_et_gherkin_favoris(pool: PgPool) {
+    let (app, emails) = app(pool.clone());
+    let alice = verified_user_at(&app, &emails, "n1@exemple.fr", "nalice1", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo notifié", 15_000).await;
+    let bob = verified_user(&app, &emails, "n2@exemple.fr", "nbob1").await;
+    let jeu = publish_valued(&app, &bob, "Jeu notifié", 4_000).await;
+
+    // Carole met le vélo en favori et COUPE les e-mails « favoris ».
+    let carole = verified_user(&app, &emails, "n3@exemple.fr", "ncarole1").await;
+    let response = call(
+        &app,
+        request(
+            "PUT",
+            &format!("/items/{velo}/favorite"),
+            None,
+            Some(&carole),
+        ),
+    )
+    .await;
+    assert!(response.status().is_success());
+    let response = call(
+        &app,
+        request(
+            "PUT",
+            "/me/preferences/notifications",
+            Some(serde_json::json!({
+                "proposition_recue": true, "proposition_cloturee": true,
+                "message_recu": true, "evaluation": true, "favori": false
+            })),
+            Some(&carole),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_json(response).await["favori"], false);
+
+    // Bob propose : Alice a une notification in-app ET un e-mail (défaut).
+    let proposal = simple_proposal(&app, &bob, &jeu, &velo).await;
+    let liste =
+        body_json(call(&app, request("GET", "/notifications", None, Some(&alice))).await).await;
+    assert_eq!(liste["unread_count"], 1);
+    assert_eq!(liste["notifications"][0]["type"], "proposition_recue");
+    let notif_id = liste["notifications"][0]["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+    {
+        let emails = emails.lock().expect("verrou");
+        assert!(emails
+            .iter()
+            .any(|e| e.to == "n1@exemple.fr" && e.subject.contains("Nouvelle proposition")));
+    }
+
+    // Alice accepte : Bob est notifié (acceptation), et le Gherkin F5.3 —
+    // Carole reçoit la notification in-app « favori réservé » mais AUCUN
+    // e-mail (préférence coupée).
+    accepted_trade(&app, &alice, &proposal).await;
+    let liste_bob =
+        body_json(call(&app, request("GET", "/notifications", None, Some(&bob))).await).await;
+    assert!(liste_bob["notifications"]
+        .as_array()
+        .expect("liste")
+        .iter()
+        .any(|n| n["type"] == "proposition_acceptee"));
+    {
+        let emails = emails.lock().expect("verrou");
+        assert!(emails
+            .iter()
+            .any(|e| e.to == "n2@exemple.fr" && e.subject.contains("acceptée")));
+    }
+    let liste_carole =
+        body_json(call(&app, request("GET", "/notifications", None, Some(&carole))).await).await;
+    assert!(
+        liste_carole["notifications"]
+            .as_array()
+            .expect("liste")
+            .iter()
+            .any(|n| n["type"] == "favori"),
+        "la notification in-app favori doit exister"
+    );
+    {
+        let emails = emails.lock().expect("verrou");
+        assert!(
+            !emails
+                .iter()
+                .any(|e| e.to == "n3@exemple.fr" && e.subject.contains("favori")),
+            "e-mail favoris coupé : rien ne doit partir (Gherkin F5.3)"
+        );
+    }
+
+    // Marquage lu : à l'unité puis en masse.
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/notifications/{notif_id}/read"),
+            None,
+            Some(&alice),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let compteur = body_json(
+        call(
+            &app,
+            request("GET", "/notifications/unread-count", None, Some(&alice)),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(compteur["unread_count"], 0);
+    let response = call(
+        &app,
+        request("POST", "/notifications/read-all", None, Some(&bob)),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let compteur = body_json(
+        call(
+            &app,
+            request("GET", "/notifications/unread-count", None, Some(&bob)),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(compteur["unread_count"], 0);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn preference_coupee_bloque_email_mais_pas_inapp(pool: PgPool) {
+    let (app, emails) = app(pool.clone());
+    let alice = verified_user_at(&app, &emails, "n4@exemple.fr", "nalice2", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo discret", 15_000).await;
+    let bob = verified_user(&app, &emails, "n5@exemple.fr", "nbob2").await;
+    let jeu = publish_valued(&app, &bob, "Jeu discret", 4_000).await;
+
+    // Alice coupe les e-mails « propositions reçues ».
+    call(
+        &app,
+        request(
+            "PUT",
+            "/me/preferences/notifications",
+            Some(serde_json::json!({
+                "proposition_recue": false, "proposition_cloturee": true,
+                "message_recu": true, "evaluation": true, "favori": true
+            })),
+            Some(&alice),
+        ),
+    )
+    .await;
+    simple_proposal(&app, &bob, &jeu, &velo).await;
+    let liste =
+        body_json(call(&app, request("GET", "/notifications", None, Some(&alice))).await).await;
+    assert_eq!(liste["unread_count"], 1, "l'in-app n'est pas débrayable");
+    {
+        let emails = emails.lock().expect("verrou");
+        assert!(
+            !emails
+                .iter()
+                .any(|e| e.to == "n4@exemple.fr" && e.subject.contains("Nouvelle proposition")),
+            "e-mail proposition coupé"
+        );
+    }
+}

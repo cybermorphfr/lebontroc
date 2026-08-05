@@ -173,6 +173,7 @@ pub async fn refuse_proposal(pool: &PgPool, id: Uuid, recipient_id: Uuid) -> sql
 #[derive(Debug, Clone, FromRow)]
 pub struct ExpiredProposal {
     pub id: Uuid,
+    pub proposer_id: Uuid,
     pub proposer_email: String,
     pub proposer_pseudo: String,
     pub recipient_pseudo: String,
@@ -187,7 +188,8 @@ pub async fn expire_overdue(pool: &PgPool) -> sqlx::Result<Vec<ExpiredProposal>>
             WHERE status IN ('envoyee', 'vue') AND expires_at < now() \
             RETURNING id, proposer_id, recipient_id \
          ) \
-         SELECT e.id, u.email::text AS proposer_email, u.pseudo::text AS proposer_pseudo, \
+         SELECT e.id, e.proposer_id, u.email::text AS proposer_email, \
+                u.pseudo::text AS proposer_pseudo, \
                 r.pseudo::text AS recipient_pseudo \
          FROM expired e \
          JOIN users u ON u.id = e.proposer_id \
@@ -214,6 +216,7 @@ pub struct Trade {
 #[derive(Debug, Clone, FromRow)]
 pub struct Eviction {
     pub proposal_id: Uuid,
+    pub proposer_id: Uuid,
     pub proposer_email: String,
     pub proposer_pseudo: String,
 }
@@ -417,7 +420,7 @@ pub(crate) async fn invalidate_competitors(
             ) \
             RETURNING id, proposer_id \
          ) \
-         SELECT v.id AS proposal_id, u.email::text AS proposer_email, \
+         SELECT v.id AS proposal_id, v.proposer_id, u.email::text AS proposer_email, \
                 u.pseudo::text AS proposer_pseudo \
          FROM victimes v JOIN users u ON u.id = v.proposer_id",
     )

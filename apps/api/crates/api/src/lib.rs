@@ -9,6 +9,7 @@ pub mod error;
 pub mod extract;
 pub mod health;
 pub mod messaging;
+pub mod notification;
 pub mod openapi;
 pub mod telemetry;
 pub mod trade;
@@ -136,6 +137,7 @@ pub fn router(state: AppState) -> Router {
         .merge(trade::router())
         .merge(messaging::router())
         .merge(dispute::router())
+        .merge(notification::router())
         .with_state(state)
         .layer(
             ServiceBuilder::new()

@@ -9,6 +9,7 @@ pub mod catalog;
 pub mod dispute;
 pub mod health;
 pub mod moderation;
+pub mod notification;
 pub mod payment;
 pub mod review;
 pub mod shipping;

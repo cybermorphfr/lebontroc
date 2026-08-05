@@ -100,6 +100,7 @@ pub async fn conversation_summaries(
 #[derive(Debug, Clone, FromRow)]
 pub struct UnreadReminder {
     pub proposal_id: Uuid,
+    pub recipient_id: Uuid,
     pub recipient_email: String,
     pub recipient_pseudo: String,
     pub sender_pseudo: String,
@@ -117,7 +118,7 @@ pub async fn claim_unread_reminders(pool: &PgPool) -> sqlx::Result<Vec<UnreadRem
          ), grouped AS ( \
             SELECT DISTINCT proposal_id, sender_id FROM stale \
          ) \
-         SELECT g.proposal_id, \
+         SELECT g.proposal_id, ur.id AS recipient_id, \
                 ur.email::text AS recipient_email, ur.pseudo::text AS recipient_pseudo, \
                 us.pseudo::text AS sender_pseudo \
          FROM grouped g \

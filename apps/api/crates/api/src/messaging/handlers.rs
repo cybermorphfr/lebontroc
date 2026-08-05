@@ -326,6 +326,28 @@ pub async fn remind_unread(state: &AppState) -> usize {
     };
     let count = reminders.len();
     for reminder in reminders {
+        // F5.3 — in-app toujours ; e-mail selon les préférences.
+        crate::notification::handlers::notify(
+            state,
+            reminder.recipient_id,
+            "message_recu",
+            "Des messages t'attendent".to_string(),
+            format!(
+                "{} t'a écrit — la conversation continue.",
+                reminder.sender_pseudo
+            ),
+            format!("/trocs/{}", reminder.proposal_id),
+        )
+        .await;
+        if !crate::notification::handlers::email_allowed(
+            state,
+            reminder.recipient_id,
+            "message_recu",
+        )
+        .await
+        {
+            continue;
+        }
         if let Err(error) = state
             .mailer
             .send_unread_reminder(

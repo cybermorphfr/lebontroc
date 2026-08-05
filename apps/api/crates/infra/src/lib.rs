@@ -9,6 +9,7 @@ pub mod dispute_repo;
 pub mod email;
 pub mod favorites_repo;
 pub mod message_repo;
+pub mod notification_repo;
 pub mod payment;
 pub mod payment_repo;
 pub mod review_repo;

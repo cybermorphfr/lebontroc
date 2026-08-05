@@ -40,7 +40,7 @@ export function Conversation({
   }, [messages.length]);
 
   useRealtime((event) => {
-    if (event.proposal_id !== proposalId) return;
+    if (!("proposal_id" in event) || event.proposal_id !== proposalId) return;
     if (event.type === "message") {
       const message = event.message as MessageResponse;
       setMessages((current) =>

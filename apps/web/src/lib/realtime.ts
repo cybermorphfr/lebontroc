@@ -18,7 +18,8 @@ export type RealtimeEvent =
       };
     }
   | { type: "read"; proposal_id: string; reader_pseudo: string }
-  | { type: "trade_updated"; proposal_id: string; trade_id: string };
+  | { type: "trade_updated"; proposal_id: string; trade_id: string }
+  | { type: "notification_new"; unread_count: number };
 
 /**
  * Connexion WebSocket au flux temps réel, avec reconnexion automatique

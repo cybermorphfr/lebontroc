@@ -16,6 +16,7 @@ use uuid::Uuid;
 use crate::error::ApiError;
 use crate::extract::CurrentUser;
 use crate::messaging::ws::broadcast_event;
+use crate::notification::handlers::{email_allowed, notify, notify_fans};
 use crate::telemetry;
 use crate::trade::dto::{
     AcceptProposalRequest, ConfigureShippingRequest, ConfirmTradeRequest, CreateProposalRequest,
@@ -266,6 +267,31 @@ pub async fn create_proposal(
     )
     .await;
 
+    // F5.3 — le destinataire est prévenu (in-app + e-mail selon préférences).
+    if let (Ok(Some(me)), Ok(Some(recipient))) = (
+        infra::auth_repo::find_user_by_id(&state.pool, user.user_id).await,
+        infra::auth_repo::find_user_by_id(&state.pool, recipient_id).await,
+    ) {
+        notify(
+            &state,
+            recipient_id,
+            "proposition_recue",
+            "Nouvelle proposition de troc !".to_string(),
+            format!("{} te propose un échange.", me.pseudo),
+            format!("/trocs/{id}"),
+        )
+        .await;
+        if email_allowed(&state, recipient_id, "proposition_recue").await {
+            if let Err(error) = state
+                .mailer
+                .send_proposal_received(&recipient.email, &recipient.pseudo, &me.pseudo)
+                .await
+            {
+                tracing::error!(%error, "e-mail proposition reçue non parti");
+            }
+        }
+    }
+
     let response = proposal_response(&state, id, user.user_id).await?;
     Ok((StatusCode::CREATED, Json(response)))
 }
@@ -361,6 +387,30 @@ pub async fn refuse_proposal(
         json!({"proposal_id": id}),
     )
     .await;
+    // F5.3 — le proposant apprend le refus (in-app + e-mail selon prefs).
+    if let (Ok(Some(me)), Ok(Some(proposer))) = (
+        infra::auth_repo::find_user_by_id(&state.pool, user.user_id).await,
+        infra::auth_repo::find_user_by_id(&state.pool, proposal.proposer_id).await,
+    ) {
+        notify(
+            &state,
+            proposal.proposer_id,
+            "proposition_cloturee",
+            "Proposition déclinée".to_string(),
+            format!("{} n'a pas retenu ta proposition.", me.pseudo),
+            format!("/trocs/{id}"),
+        )
+        .await;
+        if email_allowed(&state, proposal.proposer_id, "proposition_cloturee").await {
+            if let Err(error) = state
+                .mailer
+                .send_proposal_refused(&proposer.email, &proposer.pseudo, &me.pseudo)
+                .await
+            {
+                tracing::error!(%error, "e-mail refus non parti");
+            }
+        }
+    }
     Ok(Json(proposal_response(&state, id, user.user_id).await?))
 }
 
@@ -376,16 +426,30 @@ pub async fn expire_and_notify(state: &AppState) -> usize {
     };
     let count = expired.len();
     for proposal in expired {
-        if let Err(error) = state
-            .mailer
-            .send_proposal_expired(
-                &proposal.proposer_email,
-                &proposal.proposer_pseudo,
-                &proposal.recipient_pseudo,
-            )
-            .await
-        {
-            tracing::error!(%error, proposal_id = %proposal.id, "e-mail d'expiration en échec");
+        notify(
+            state,
+            proposal.proposer_id,
+            "proposition_cloturee",
+            "Proposition expirée".to_string(),
+            format!(
+                "{} n'a pas répondu sous 7 jours.",
+                proposal.recipient_pseudo
+            ),
+            format!("/trocs/{}", proposal.id),
+        )
+        .await;
+        if email_allowed(state, proposal.proposer_id, "proposition_cloturee").await {
+            if let Err(error) = state
+                .mailer
+                .send_proposal_expired(
+                    &proposal.proposer_email,
+                    &proposal.proposer_pseudo,
+                    &proposal.recipient_pseudo,
+                )
+                .await
+            {
+                tracing::error!(%error, proposal_id = %proposal.id, "e-mail d'expiration en échec");
+            }
         }
         telemetry::track(
             state,
@@ -558,6 +622,39 @@ pub async fn accept_proposal(
                 json!({"trade_id": trade.id}),
             )
             .await;
+
+            // F5.3 — l'autre partie apprend l'acceptation (e-mail
+            // verrouillé : ça engage paiement et remise) ; les fans des
+            // objets voient leur favori réservé.
+            let other_id = if apercu.proposer_id == user.user_id {
+                apercu.recipient_id
+            } else {
+                apercu.proposer_id
+            };
+            if let (Ok(Some(me)), Ok(Some(other))) = (
+                infra::auth_repo::find_user_by_id(&state.pool, user.user_id).await,
+                infra::auth_repo::find_user_by_id(&state.pool, other_id).await,
+            ) {
+                notify(
+                    &state,
+                    other_id,
+                    "proposition_acceptee",
+                    "🤝 Proposition acceptée !".to_string(),
+                    format!("{} a accepté le troc. À vous de jouer.", me.pseudo),
+                    format!("/trocs/{id}"),
+                )
+                .await;
+                if email_allowed(&state, other_id, "proposition_acceptee").await {
+                    if let Err(error) = state
+                        .mailer
+                        .send_proposal_accepted(&other.email, &other.pseudo, &me.pseudo)
+                        .await
+                    {
+                        tracing::error!(%error, "e-mail acceptation non parti");
+                    }
+                }
+            }
+            notify_fans(&state, trade.id, true).await;
             notify_evictions(&state, evictions).await;
 
             // L'autre partie n'est pas devant l'écran : la prévenir qu'un
@@ -570,6 +667,23 @@ pub async fn accept_proposal(
             let other_must_act =
                 body.delivery_mode == "envoi" || payments.iter().any(|p| p.payer_id == other_id);
             if other_must_act {
+                notify(
+                    &state,
+                    other_id,
+                    if body.delivery_mode == "envoi" {
+                        "expedition"
+                    } else {
+                        "paiement"
+                    },
+                    "Le troc est accepté — à toi de jouer".to_string(),
+                    if body.delivery_mode == "envoi" {
+                        "Choisis le format de ton colis et ton point relais.".to_string()
+                    } else {
+                        "Bloque ton règlement pour activer le troc.".to_string()
+                    },
+                    format!("/trocs/{id}"),
+                )
+                .await;
                 match infra::auth_repo::find_user_by_id(&state.pool, other_id).await {
                     Ok(Some(other)) => {
                         let my_pseudo = if apercu.proposer_id == user.user_id {
@@ -625,6 +739,18 @@ pub async fn accept_proposal(
 /// Notifie les proposants dont la proposition vient d'être rendue caduque.
 async fn notify_evictions(state: &AppState, evictions: Vec<infra::trade_repo::Eviction>) {
     for eviction in evictions {
+        notify(
+            state,
+            eviction.proposer_id,
+            "proposition_cloturee",
+            "Proposition caduque".to_string(),
+            "Un des objets vient d'être réservé dans un autre troc.".to_string(),
+            format!("/trocs/{}", eviction.proposal_id),
+        )
+        .await;
+        if !email_allowed(state, eviction.proposer_id, "proposition_cloturee").await {
+            continue;
+        }
         if let Err(error) = state
             .mailer
             .send_proposal_invalidated(&eviction.proposer_email, &eviction.proposer_pseudo)
@@ -748,6 +874,31 @@ pub async fn counter_proposal(
         }),
     )
     .await;
+
+    // F5.3 — l'autre partie découvre la contre-proposition.
+    if let (Ok(Some(me)), Ok(Some(recipient))) = (
+        infra::auth_repo::find_user_by_id(&state.pool, user.user_id).await,
+        infra::auth_repo::find_user_by_id(&state.pool, old.proposer_id).await,
+    ) {
+        notify(
+            &state,
+            old.proposer_id,
+            "proposition_recue",
+            "Contre-proposition reçue".to_string(),
+            format!("{} te fait une contre-proposition.", me.pseudo),
+            format!("/trocs/{new_id}"),
+        )
+        .await;
+        if email_allowed(&state, old.proposer_id, "proposition_recue").await {
+            if let Err(error) = state
+                .mailer
+                .send_proposal_received(&recipient.email, &recipient.pseudo, &me.pseudo)
+                .await
+            {
+                tracing::error!(%error, "e-mail contre-proposition non parti");
+            }
+        }
+    }
 
     let response = proposal_response(&state, new_id, user.user_id).await?;
     Ok((StatusCode::CREATED, Json(response)))
@@ -990,6 +1141,20 @@ async fn expire_unpaid_if_overdue(state: &AppState, trade_id: Uuid) -> sqlx::Res
         json!({"trade_id": trade_id, "failure_reason": "delai_depasse"}),
     )
     .await;
+    if let Ok(Some(trade)) = infra::trade_repo::get_trade(&state.pool, trade_id).await {
+        for user_id in [trade.proposer_id, trade.recipient_id] {
+            notify(
+                state,
+                user_id,
+                "paiement",
+                "Troc annulé — règlement jamais effectué".to_string(),
+                "Le délai de paiement est dépassé : les objets sont libérés.".to_string(),
+                format!("/trocs/{}", trade.proposal_id),
+            )
+            .await;
+        }
+    }
+    notify_fans(state, trade_id, false).await;
     tracing::info!(%trade_id, "troc annulé : règlement jamais effectué");
     Ok(true)
 }
@@ -1024,6 +1189,15 @@ async fn notify_released_preauth(state: &AppState, payment: &infra::payment_repo
             tracing::error!(%error, trade_id = %payment.trade_id, "e-mail de libération en échec");
         }
     }
+    notify(
+        state,
+        payment.payer_id,
+        "paiement",
+        "Ton règlement est libéré".to_string(),
+        "La préautorisation a été annulée : rien n'a été débité.".to_string(),
+        "/trocs".to_string(),
+    )
+    .await;
 }
 
 /// Préautoriser mon règlement (soulte F4.2 et/ou frais d'envoi F4.3) —
@@ -1171,6 +1345,15 @@ pub async fn pay_trade(
                     )
                     .await;
                     notify_evictions(&state, evictions).await;
+                    notify(
+                        &state,
+                        payment.beneficiary_id,
+                        "paiement",
+                        "Règlement sécurisé".to_string(),
+                        "L'autre partie a bloqué son règlement — le troc avance.".to_string(),
+                        format!("/trocs/{}", trade.proposal_id),
+                    )
+                    .await;
                     // La soulte séquestrée mérite un e-mail au bénéficiaire ;
                     // les simples frais d'envoi, non.
                     if payment.cash_cents() > 0 {
@@ -1344,6 +1527,18 @@ pub async fn confirm_trade(
                 // F5.2 : la capture main propre n'est plus immédiate — la
                 // maintenance capturera 48 h après la remise, sauf litige
                 // ouvert dans la fenêtre (choix Brian).
+                for user_id in [trade.proposer_id, trade.recipient_id] {
+                    notify(
+                        &state,
+                        user_id,
+                        "remise",
+                        "🎉 Troc finalisé !".to_string(),
+                        "La remise est confirmée des deux côtés. Pense à noter ton échange."
+                            .to_string(),
+                        format!("/trocs/{}", trade.proposal_id),
+                    )
+                    .await;
+                }
                 return Ok(Json(
                     full_trade_response(&state, trade, user.user_id).await?,
                 ));
@@ -1489,6 +1684,24 @@ pub async fn cancel_trade(
             )
             .await;
             release_payments_if_any(&state, id).await;
+            if let Ok(Some(trade)) = infra::trade_repo::get_trade(&state.pool, id).await {
+                let other_id = if trade.proposer_id == user.user_id {
+                    trade.recipient_id
+                } else {
+                    trade.proposer_id
+                };
+                notify(
+                    &state,
+                    other_id,
+                    "remise",
+                    "Troc annulé d'un commun accord".to_string(),
+                    "L'annulation est confirmée : les objets sont de nouveau disponibles."
+                        .to_string(),
+                    format!("/trocs/{}", trade.proposal_id),
+                )
+                .await;
+            }
+            notify_fans(&state, id, false).await;
             let trade = participant_trade(&state, id, user.user_id).await?;
             Ok(Json(
                 full_trade_response(&state, trade, user.user_id).await?,
@@ -1557,6 +1770,23 @@ pub async fn maintain_trades(state: &AppState) -> MaintenanceReport {
                     .await;
                     // Un troc J+14 peut porter une soulte séquestrée : libérer.
                     release_payments_if_any(state, party.trade_id).await;
+                    if let Ok(Some(trade)) =
+                        infra::trade_repo::get_trade(&state.pool, party.trade_id).await
+                    {
+                        for user_id in [trade.proposer_id, trade.recipient_id] {
+                            notify(
+                                state,
+                                user_id,
+                                "remise",
+                                "Troc annulé sans rendez-vous".to_string(),
+                                "14 jours sans remise : le troc est annulé, les objets libérés."
+                                    .to_string(),
+                                format!("/trocs/{}", trade.proposal_id),
+                            )
+                            .await;
+                        }
+                    }
+                    notify_fans(state, party.trade_id, false).await;
                 }
                 if let Err(error) = state
                     .mailer
@@ -1597,6 +1827,16 @@ pub async fn maintain_trades(state: &AppState) -> MaintenanceReport {
             report.reviews_published = published as usize;
         }
         Err(error) => tracing::error!(%error, "publication des évaluations J+14 en échec"),
+    }
+
+    // F5.3 — purge des notifications au-delà de la rétention (90 j).
+    if let Err(error) = infra::notification_repo::purge_old_notifications(
+        &state.pool,
+        domain::notification::RETENTION_JOURS,
+    )
+    .await
+    {
+        tracing::error!(%error, "purge des notifications en échec");
     }
 
     // F5.2 — sans réponse contradictoire sous 72 h, le dossier part en examen.
@@ -1849,6 +2089,18 @@ pub async fn drop_parcel(
                 {
                     tracing::error!(%error, shipment_id = %id, "e-mail d'arrivée en échec");
                 }
+                notify(
+                    &state,
+                    shipment.recipient_id,
+                    "expedition",
+                    "📦 Ton colis est arrivé !".to_string(),
+                    format!(
+                        "Il t'attend au relais « {} ».",
+                        shipment.relay_name.as_deref().unwrap_or("point relais")
+                    ),
+                    "/trocs".to_string(),
+                )
+                .await;
             }
         }
     }
@@ -1996,6 +2248,15 @@ async fn maybe_finalize_shipping(state: &AppState, trade_id: Uuid) {
                             tracing::error!(%error, %trade_id, "e-mail de finalisation en échec");
                         }
                     }
+                    notify(
+                        state,
+                        me,
+                        "remise",
+                        "🎉 Troc finalisé !".to_string(),
+                        "Les deux colis sont confirmés. Pense à noter ton échange.".to_string(),
+                        format!("/trocs/{}", trade.proposal_id),
+                    )
+                    .await;
                 }
                 broadcast_event(
                     state,
@@ -2042,6 +2303,16 @@ async fn notify_frozen_trade(state: &AppState, trade_id: Uuid, details: &str) {
                     tracing::error!(%error, %trade_id, "e-mail de gel en échec");
                 }
             }
+            notify(
+                state,
+                me,
+                "litige",
+                "Troc gelé — examen en cours".to_string(),
+                "Un problème bloque ce troc ; l'équipe examine. Les paiements restent en sécurité."
+                    .to_string(),
+                format!("/trocs/{}", trade.proposal_id),
+            )
+            .await;
         }
     }
 }
@@ -2245,8 +2516,18 @@ async fn notify_shipping_cancelled(state: &AppState, trade_id: Uuid) {
                     tracing::error!(%error, %trade_id, "e-mail d'annulation envoi en échec");
                 }
             }
+            notify(
+                state,
+                me,
+                "expedition",
+                "Troc envoi annulé".to_string(),
+                "Aucun colis déposé à J+5 : le troc est annulé, rien n'est débité.".to_string(),
+                format!("/trocs/{}", trade.proposal_id),
+            )
+            .await;
         }
     }
+    notify_fans(state, trade_id, false).await;
 }
 
 // ————— Évaluations (F5.1) —————
@@ -2333,6 +2614,34 @@ pub async fn submit_review(
                     json!({"trade_id": id, "reason": "both_submitted"}),
                 )
                 .await;
+                for (me, other) in [
+                    (trade.proposer_id, trade.recipient_id),
+                    (trade.recipient_id, trade.proposer_id),
+                ] {
+                    notify(
+                        &state,
+                        me,
+                        "evaluation",
+                        "⭐ Vos évaluations sont publiées".to_string(),
+                        "Les deux notes sont en ligne sur vos profils.".to_string(),
+                        format!("/trocs/{}", trade.proposal_id),
+                    )
+                    .await;
+                    if email_allowed(&state, me, "evaluation").await {
+                        if let (Ok(Some(user)), Ok(Some(other))) = (
+                            infra::auth_repo::find_user_by_id(&state.pool, me).await,
+                            infra::auth_repo::find_user_by_id(&state.pool, other).await,
+                        ) {
+                            if let Err(error) = state
+                                .mailer
+                                .send_review_published(&user.email, &user.pseudo, &other.pseudo)
+                                .await
+                            {
+                                tracing::error!(%error, "e-mail d'évaluation non parti");
+                            }
+                        }
+                    }
+                }
             }
             broadcast_event(
                 &state,

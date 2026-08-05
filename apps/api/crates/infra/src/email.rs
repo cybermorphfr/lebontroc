@@ -20,6 +20,9 @@ pub enum EmailSender {
     Smtp {
         transport: Box<AsyncSmtpTransport<Tokio1Executor>>,
         from: Box<Mailbox>,
+        /// Reply-To (boîte réelle de Brian — le domaine d'envoi n'a pas de
+        /// boîte de réception).
+        reply_to: Option<Box<Mailbox>>,
     },
     Capture(Arc<Mutex<Vec<CapturedEmail>>>),
 }
@@ -34,6 +37,7 @@ impl EmailSender {
         password: Option<String>,
         tls: &str,
         from: &str,
+        reply_to: Option<&str>,
     ) -> anyhow::Result<Self> {
         let mut builder = match tls {
             "starttls" => AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(host)?,
@@ -50,6 +54,14 @@ impl EmailSender {
                 from.parse()
                     .map_err(|e| anyhow::anyhow!("SMTP_FROM invalide : {e}"))?,
             ),
+            reply_to: match reply_to {
+                Some(address) => {
+                    Some(Box::new(address.parse().map_err(|e| {
+                        anyhow::anyhow!("SMTP_REPLY_TO invalide : {e}")
+                    })?))
+                }
+                None => None,
+            },
         })
     }
 
@@ -66,14 +78,21 @@ impl EmailSender {
         html: String,
     ) -> anyhow::Result<()> {
         match self {
-            EmailSender::Smtp { transport, from } => {
-                let message = Message::builder()
+            EmailSender::Smtp {
+                transport,
+                from,
+                reply_to,
+            } => {
+                let mut builder = Message::builder()
                     .from((**from).clone())
                     .to(to
                         .parse()
                         .map_err(|e| anyhow::anyhow!("destinataire invalide : {e}"))?)
-                    .subject(subject)
-                    .multipart(MultiPart::alternative_plain_html(text, html))?;
+                    .subject(subject);
+                if let Some(reply_to) = reply_to {
+                    builder = builder.reply_to((**reply_to).clone());
+                }
+                let message = builder.multipart(MultiPart::alternative_plain_html(text, html))?;
                 transport.send(message).await?;
                 Ok(())
             }
@@ -601,6 +620,156 @@ impl EmailSender {
             r#"<div style="font-family:monospace;padding:24px">
   <p><strong>Litige gelé — examen manuel requis</strong></p>
   <p>Troc : {trade_id}<br/>Détails : {details}</p>
+</div>"#
+        );
+        self.send(to, subject, text, html).await
+    }
+
+    /// F5.3 — proposal_received.
+    pub async fn send_proposal_received(
+        &self,
+        to: &str,
+        pseudo: &str,
+        other_pseudo: &str,
+    ) -> anyhow::Result<()> {
+        let subject = "Nouvelle proposition de troc !";
+        let text = format!(
+            "Salut {pseudo},\n\n{other_pseudo} te propose un troc. Va voir ce qu'il y a dans la balance — la proposition expire sous 7 jours.\n\nhttps://lebontroc.brianplus.com/trocs\n\nL'équipe Lebontroc\n"
+        );
+        let html = format!(
+            r#"<div style="font-family:Figtree,system-ui,sans-serif;background:#f5ead8;color:#201e1d;padding:32px">
+  <div style="max-width:480px;margin:0 auto;background:#ebddc5;border-radius:32px;padding:32px">
+    <p style="font-size:24px;margin:0 0 16px">Lebontroc</p>
+    <p>Salut {pseudo},</p>
+    <p><strong>{other_pseudo}</strong> te propose un troc. Va voir ce qu'il y a dans la balance — la proposition expire sous 7&nbsp;jours.</p>
+    <p>L'équipe Lebontroc</p>
+    <p style="font-size:12px;color:#8a8378">Tu peux régler tes e-mails dans <a href="https://lebontroc.brianplus.com/reglages/notifications">tes préférences</a>.</p>
+  </div>
+</div>"#
+        );
+        self.send(to, subject, text, html).await
+    }
+
+    /// F5.3 — proposal_accepted.
+    pub async fn send_proposal_accepted(
+        &self,
+        to: &str,
+        pseudo: &str,
+        other_pseudo: &str,
+    ) -> anyhow::Result<()> {
+        let subject = "🤝 Ta proposition est acceptée !";
+        let text = format!(
+            "Salut {pseudo},\n\n{other_pseudo} a accepté ton troc. Prochaine étape sur la page du troc : remise en main propre ou envoi.\n\nhttps://lebontroc.brianplus.com/trocs\n\nL'équipe Lebontroc\n"
+        );
+        let html = format!(
+            r#"<div style="font-family:Figtree,system-ui,sans-serif;background:#f5ead8;color:#201e1d;padding:32px">
+  <div style="max-width:480px;margin:0 auto;background:#ebddc5;border-radius:32px;padding:32px">
+    <p style="font-size:24px;margin:0 0 16px">Lebontroc</p>
+    <p>Salut {pseudo},</p>
+    <p><strong>{other_pseudo}</strong> a accepté ton troc. Prochaine étape sur la page du troc&nbsp;: remise en main propre ou envoi.</p>
+    <p>L'équipe Lebontroc</p>
+    <p style="font-size:12px;color:#8a8378">Tu peux régler tes e-mails dans <a href="https://lebontroc.brianplus.com/reglages/notifications">tes préférences</a>.</p>
+  </div>
+</div>"#
+        );
+        self.send(to, subject, text, html).await
+    }
+
+    /// F5.3 — proposal_refused.
+    pub async fn send_proposal_refused(
+        &self,
+        to: &str,
+        pseudo: &str,
+        other_pseudo: &str,
+    ) -> anyhow::Result<()> {
+        let subject = "Ta proposition n'a pas été retenue";
+        let text = format!(
+            "Salut {pseudo},\n\n{other_pseudo} a décliné ta proposition. Rien de grave — le fil regorge d'autres trouvailles.\n\nhttps://lebontroc.brianplus.com/trocs\n\nL'équipe Lebontroc\n"
+        );
+        let html = format!(
+            r#"<div style="font-family:Figtree,system-ui,sans-serif;background:#f5ead8;color:#201e1d;padding:32px">
+  <div style="max-width:480px;margin:0 auto;background:#ebddc5;border-radius:32px;padding:32px">
+    <p style="font-size:24px;margin:0 0 16px">Lebontroc</p>
+    <p>Salut {pseudo},</p>
+    <p><strong>{other_pseudo}</strong> a décliné ta proposition. Rien de grave — le fil regorge d'autres trouvailles.</p>
+    <p>L'équipe Lebontroc</p>
+    <p style="font-size:12px;color:#8a8378">Tu peux régler tes e-mails dans <a href="https://lebontroc.brianplus.com/reglages/notifications">tes préférences</a>.</p>
+  </div>
+</div>"#
+        );
+        self.send(to, subject, text, html).await
+    }
+
+    /// F5.3 — review_published.
+    pub async fn send_review_published(
+        &self,
+        to: &str,
+        pseudo: &str,
+        other_pseudo: &str,
+    ) -> anyhow::Result<()> {
+        let subject = "Ton évaluation est en ligne";
+        let text = format!(
+            "Salut {pseudo},\n\nTon échange avec {other_pseudo} est noté des deux côtés : les évaluations sont publiées sur vos profils.\n\nhttps://lebontroc.brianplus.com/trocs\n\nL'équipe Lebontroc\n"
+        );
+        let html = format!(
+            r#"<div style="font-family:Figtree,system-ui,sans-serif;background:#f5ead8;color:#201e1d;padding:32px">
+  <div style="max-width:480px;margin:0 auto;background:#ebddc5;border-radius:32px;padding:32px">
+    <p style="font-size:24px;margin:0 0 16px">Lebontroc</p>
+    <p>Salut {pseudo},</p>
+    <p>Ton échange avec <strong>{other_pseudo}</strong> est noté des deux côtés&nbsp;: les évaluations sont publiées sur vos profils.</p>
+    <p>L'équipe Lebontroc</p>
+    <p style="font-size:12px;color:#8a8378">Tu peux régler tes e-mails dans <a href="https://lebontroc.brianplus.com/reglages/notifications">tes préférences</a>.</p>
+  </div>
+</div>"#
+        );
+        self.send(to, subject, text, html).await
+    }
+
+    /// F5.3 — favorite_reserved.
+    pub async fn send_favorite_reserved(
+        &self,
+        to: &str,
+        pseudo: &str,
+        title: &str,
+    ) -> anyhow::Result<()> {
+        let subject = "Ton favori vient d'être réservé";
+        let text = format!(
+            "Salut {pseudo},\n\n« {title} » est en cours de troc. Il peut revenir si l'échange n'aboutit pas — on te tiendra au courant.\n\nhttps://lebontroc.brianplus.com/trocs\n\nL'équipe Lebontroc\n"
+        );
+        let html = format!(
+            r#"<div style="font-family:Figtree,system-ui,sans-serif;background:#f5ead8;color:#201e1d;padding:32px">
+  <div style="max-width:480px;margin:0 auto;background:#ebddc5;border-radius:32px;padding:32px">
+    <p style="font-size:24px;margin:0 0 16px">Lebontroc</p>
+    <p>Salut {pseudo},</p>
+    <p>«&nbsp;{title}&nbsp;» est en cours de troc. Il peut revenir si l'échange n'aboutit pas — on te tiendra au courant.</p>
+    <p>L'équipe Lebontroc</p>
+    <p style="font-size:12px;color:#8a8378">Tu peux régler tes e-mails dans <a href="https://lebontroc.brianplus.com/reglages/notifications">tes préférences</a>.</p>
+  </div>
+</div>"#
+        );
+        self.send(to, subject, text, html).await
+    }
+
+    /// F5.3 — favorite_available.
+    pub async fn send_favorite_available(
+        &self,
+        to: &str,
+        pseudo: &str,
+        title: &str,
+    ) -> anyhow::Result<()> {
+        let subject = "Ton favori est de nouveau disponible !";
+        let text = format!(
+            "Salut {pseudo},\n\nBonne nouvelle : « {title} » est reparti dans le fil. Premier arrivé, premier servi.\n\nhttps://lebontroc.brianplus.com/trocs\n\nL'équipe Lebontroc\n"
+        );
+        let html = format!(
+            r#"<div style="font-family:Figtree,system-ui,sans-serif;background:#f5ead8;color:#201e1d;padding:32px">
+  <div style="max-width:480px;margin:0 auto;background:#ebddc5;border-radius:32px;padding:32px">
+    <p style="font-size:24px;margin:0 0 16px">Lebontroc</p>
+    <p>Salut {pseudo},</p>
+    <p>Bonne nouvelle&nbsp;: «&nbsp;{title}&nbsp;» est reparti dans le fil. Premier arrivé, premier servi.</p>
+    <p>L'équipe Lebontroc</p>
+    <p style="font-size:12px;color:#8a8378">Tu peux régler tes e-mails dans <a href="https://lebontroc.brianplus.com/reglages/notifications">tes préférences</a>.</p>
+  </div>
 </div>"#
         );
         self.send(to, subject, text, html).await

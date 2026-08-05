@@ -1234,6 +1234,56 @@
         }
       }
     },
+    "/me/preferences/notifications": {
+      "get": {
+        "tags": [
+          "notification"
+        ],
+        "summary": "Mes préférences e-mail (types désactivables uniquement).",
+        "operationId": "get_email_prefs",
+        "responses": {
+          "200": {
+            "description": "Préférences e-mail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailPrefsResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "notification"
+        ],
+        "summary": "Mettre à jour mes préférences e-mail.",
+        "operationId": "put_email_prefs",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailPrefsResponse"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Préférences enregistrées",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailPrefsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/me/proposals": {
       "get": {
         "tags": [
@@ -1331,6 +1381,99 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/notifications": {
+      "get": {
+        "tags": [
+          "notification"
+        ],
+        "summary": "Mes notifications (30 par page, les plus récentes d'abord).",
+        "operationId": "list_notifications",
+        "parameters": [
+          {
+            "name": "before",
+            "in": "query",
+            "description": "Curseur temporel (created_at de la dernière reçue)",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Notifications",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/notifications/read-all": {
+      "post": {
+        "tags": [
+          "notification"
+        ],
+        "summary": "Tout marquer comme lu.",
+        "operationId": "mark_all_read",
+        "responses": {
+          "204": {
+            "description": "Tout est lu"
+          }
+        }
+      }
+    },
+    "/notifications/unread-count": {
+      "get": {
+        "tags": [
+          "notification"
+        ],
+        "summary": "Le badge de la cloche.",
+        "operationId": "get_unread_count",
+        "responses": {
+          "200": {
+            "description": "Nombre de non-lues",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnreadCountResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/notifications/{id}/read": {
+      "post": {
+        "tags": [
+          "notification"
+        ],
+        "summary": "Marquer une notification lue (au clic — trace `notification_opened`).",
+        "operationId": "mark_read",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant de la notification",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Marquée lue"
           }
         }
       }
@@ -3255,6 +3398,34 @@
           }
         }
       },
+      "EmailPrefsResponse": {
+        "type": "object",
+        "description": "Préférences e-mail : uniquement les types désactivables ; true = e-mail\nenvoyé (défaut), false = in-app seulement.",
+        "required": [
+          "proposition_recue",
+          "proposition_cloturee",
+          "message_recu",
+          "evaluation",
+          "favori"
+        ],
+        "properties": {
+          "evaluation": {
+            "type": "boolean"
+          },
+          "favori": {
+            "type": "boolean"
+          },
+          "message_recu": {
+            "type": "boolean"
+          },
+          "proposition_cloturee": {
+            "type": "boolean"
+          },
+          "proposition_recue": {
+            "type": "boolean"
+          }
+        }
+      },
       "ErrorBody": {
         "type": "object",
         "required": [
@@ -3607,6 +3778,64 @@
           },
           "sender_pseudo": {
             "type": "string"
+          }
+        }
+      },
+      "NotificationListResponse": {
+        "type": "object",
+        "required": [
+          "notifications",
+          "unread_count"
+        ],
+        "properties": {
+          "notifications": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NotificationResponse"
+            }
+          },
+          "unread_count": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "NotificationResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "title",
+          "body",
+          "link",
+          "read",
+          "created_at"
+        ],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "link": {
+            "type": "string",
+            "description": "Lien profond vers la page concernée."
+          },
+          "read": {
+            "type": "boolean"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "description": "Type de la taxonomie (proposition_recue, paiement, favori…)."
           }
         }
       },
@@ -4601,6 +4830,18 @@
                 "$ref": "#/components/schemas/ReviewInfo"
               }
             ]
+          }
+        }
+      },
+      "UnreadCountResponse": {
+        "type": "object",
+        "required": [
+          "unread_count"
+        ],
+        "properties": {
+          "unread_count": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
