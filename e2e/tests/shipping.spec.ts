@@ -57,15 +57,19 @@ async function publishItem(page: Page, title: string) {
   await expect(page.getByRole("heading", { name: "C'est publié !" })).toBeVisible();
 }
 
-/** Configure format S + premier relais, puis paie (carte simulée OK). */
-async function setupAndPay(page: Page) {
+/**
+ * Configure format S + premier relais, puis paie (carte simulée OK).
+ * Le premier payeur voit « règlement sécurisé » ; le second active le troc
+ * et arrive directement sur « Vos colis ».
+ */
+async function setupAndPay(page: Page, headingAfter: RegExp) {
   await expect(page.getByRole("heading", { name: "Prépare ton envoi" })).toBeVisible();
   await page.getByRole("radio", { name: /S — jusqu'à 1 kg/ }).check();
   await page.getByLabel("Ton point relais de réception").selectOption({ index: 1 });
   await page.getByRole("button", { name: "Valider mon envoi" }).click();
   await expect(page.getByText("Total à bloquer")).toBeVisible();
   await page.getByRole("button", { name: /Bloquer 6,50 €/ }).click();
-  await expect(page.getByRole("heading", { name: "✓ Ton règlement est sécurisé" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: headingAfter })).toBeVisible();
 }
 
 test("envoi croisé : config, frais, étiquettes, dépôts et double confirmation", async ({
@@ -102,12 +106,11 @@ test("envoi croisé : config, frais, étiquettes, dépôts et double confirmatio
   await pageAlice.getByRole("link", { name: /objet(s)? contre/ }).click();
   await pageAlice.getByRole("button", { name: "Accepter" }).click();
   await pageAlice.getByRole("button", { name: "Par envoi (point relais)" }).click();
-  await setupAndPay(pageAlice);
+  await setupAndPay(pageAlice, /Ton règlement est sécurisé/);
 
   // Bob fait pareil de son côté : le troc s'active, les étiquettes tombent.
   await page.goto(urlTroc);
-  await setupAndPay(page);
-  await expect(page.getByRole("heading", { name: "Vos colis" })).toBeVisible();
+  await setupAndPay(page, /Vos colis/);
   const codeDepotBob = await page.getByTestId("code-depot").innerText();
   expect(codeDepotBob).toMatch(/^LBT\d{8}$/);
 

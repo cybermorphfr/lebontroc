@@ -85,11 +85,10 @@ test("finalisation croisée : codes échangés, troc finalisé, objets troqués"
   await expect(page.getByRole("heading", { name: "Conversation" })).toBeVisible();
   const urlTroc = page.url();
 
-  // Alice accepte en main propre — l'envoi est indisponible pendant la bêta.
+  // Alice accepte en main propre (l'envoi croisé existe depuis F4.3).
   await pageAlice.goto("/trocs");
   await pageAlice.getByRole("link", { name: /objet(s)? contre/ }).click();
   await pageAlice.getByRole("button", { name: "Accepter" }).click();
-  await expect(pageAlice.getByRole("button", { name: /Par envoi — bientôt/ })).toBeDisabled();
   await pageAlice.getByRole("button", { name: "En main propre" }).click();
   await expect(pageAlice.getByRole("heading", { name: "Organisez la remise" })).toBeVisible();
 
