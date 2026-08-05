@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { createApiClient } from "@lebontroc/api-client";
 
 import { AvatarLetter } from "@/components/AvatarLetter";
+import { ProfileActions } from "@/components/ProfileActions";
 import { Tag } from "@/components/ui/Tag";
 import { ancrage, CONDITION_LABELS } from "@/lib/format";
 import { getCurrentUser } from "@/lib/server-api";
@@ -57,6 +58,14 @@ export default async function TroqueurPage({
   const isOwner = viewer?.pseudo.toLowerCase() === profile.pseudo.toLowerCase();
   const count = profile.items.length;
 
+  // F5.2 — l'état de blocage pour le bouton Bloquer/Débloquer.
+  let initiallyBlocked = false;
+  if (viewer && !isOwner) {
+    const { data: blocks } = await client.GET("/me/blocks", { cache: "no-store" });
+    initiallyBlocked =
+      blocks?.pseudos.some((p) => p.toLowerCase() === profile.pseudo.toLowerCase()) ?? false;
+  }
+
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-6 pb-16">
       {isOwner ? (
@@ -103,6 +112,14 @@ export default async function TroqueurPage({
           </div>
         </div>
       </section>
+
+      {viewer && !isOwner ? (
+        <ProfileActions
+          pseudo={profile.pseudo}
+          userId={profile.user_id}
+          initiallyBlocked={initiallyBlocked}
+        />
+      ) : null}
 
       <div className="flex items-center gap-2">
         <h2 className="font-display text-xl">Son dressing</h2>

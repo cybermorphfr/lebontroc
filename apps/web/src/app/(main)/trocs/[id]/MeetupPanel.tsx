@@ -78,9 +78,13 @@ export function MeetupPanel({ trade }: { trade: TradeDetailResponse }) {
         </p>
         {payment ? (
           <p className="text-sm text-sauge-800">
-            {payment.i_am_payer
-              ? `Les ${paymentEuros} € de soulte ont été débités et transférés.`
-              : `Les ${Math.round(payment.net_cents / 100)} € de soulte t'ont été transférés.`}
+            {payment.status === "capture"
+              ? payment.i_am_payer
+                ? `Les ${paymentEuros} € de soulte ont été débités et transférés.`
+                : `Les ${Math.round(payment.net_cents / 100)} € de soulte t'ont été transférés.`
+              : payment.i_am_payer
+                ? `Les ${paymentEuros} € de soulte seront débités sous 48 h — la fenêtre pour signaler un problème.`
+                : `Les ${Math.round(payment.net_cents / 100)} € de soulte te seront transférés sous 48 h — la fenêtre pour signaler un problème.`}
           </p>
         ) : null}
       </section>

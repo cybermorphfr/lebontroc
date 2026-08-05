@@ -7,6 +7,7 @@ use axum::Router;
 use http_body_util::BodyExt;
 use sqlx::PgPool;
 use tower::ServiceExt;
+use uuid::Uuid;
 
 type Emails = std::sync::Arc<std::sync::Mutex<Vec<infra::email::CapturedEmail>>>;
 
@@ -2187,7 +2188,8 @@ async fn pay(app: &Router, who: &str, trade: &str, card: &str) -> axum::response
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn soulte_parcours_complet(pool: PgPool) {
-    let (app, emails) = app(pool.clone());
+    let (state, emails) = AppState::for_tests(pool.clone());
+    let app = api::router(state.clone());
     let alice = verified_user_at(&app, &emails, "p1@exemple.fr", "palice1", "44300").await;
     let velo = publish_valued(&app, &alice, "Vélo à soulte", 15_000).await;
     let bob = verified_user(&app, &emails, "p2@exemple.fr", "pbob1").await;
@@ -2359,6 +2361,18 @@ async fn soulte_parcours_complet(pool: PgPool) {
     assert_eq!(response.status(), StatusCode::OK);
     let vue = body_json(response).await;
     assert_eq!(vue["status"], "finalise");
+    // F5.2 : la capture main propre attend la fenêtre de contestation de
+    // 48 h — la maintenance capture ensuite.
+    assert_eq!(vue["payment"]["status"], "sequestre");
+    api::trade::handlers::maintain_trades(&state).await;
+    let vue = trade_view(&app, &bob, &trade).await;
+    assert_eq!(vue["payment"]["status"], "sequestre", "48 h non écoulées");
+    sqlx::query("UPDATE trades SET finalized_at = now() - interval '49 hours'")
+        .execute(&pool)
+        .await
+        .expect("antidatage");
+    api::trade::handlers::maintain_trades(&state).await;
+    let vue = trade_view(&app, &bob, &trade).await;
     assert_eq!(vue["payment"]["status"], "capture");
     {
         let emails = emails.lock().expect("verrou");
@@ -3179,8 +3193,11 @@ async fn envoi_signalement_gele_et_garde_les_fonds(pool: PgPool) {
         &app,
         request(
             "POST",
-            &format!("/shipments/{entrant}/report"),
-            Some(serde_json::json!({"reason": "Le jeu est arrivé cassé en deux."})),
+            &format!("/trades/{trade}/dispute"),
+            Some(serde_json::json!({
+                "reason": "abime",
+                "description": "Le jeu est arrivé cassé en deux."
+            })),
             Some(&alice),
         ),
     )
@@ -3188,6 +3205,20 @@ async fn envoi_signalement_gele_et_garde_les_fonds(pool: PgPool) {
     assert_eq!(response.status(), StatusCode::OK);
     let vue = body_json(response).await;
     assert_eq!(vue["status"], "litige_gele");
+    assert_eq!(vue["dispute"]["status"], "ouvert");
+    assert_eq!(vue["dispute"]["opened_by_me"], true);
+    // Un seul dossier par troc.
+    let doublon = call(
+        &app,
+        request(
+            "POST",
+            &format!("/trades/{trade}/dispute"),
+            Some(serde_json::json!({"reason": "abime", "description": "Encore."})),
+            Some(&bob),
+        ),
+    )
+    .await;
+    assert_eq!(doublon.status(), StatusCode::CONFLICT);
 
     // Les règlements restent séquestrés (ni capturés ni libérés) : la
     // résolution est manuelle en attendant F5.2.
@@ -3198,13 +3229,13 @@ async fn envoi_signalement_gele_et_garde_les_fonds(pool: PgPool) {
             .await
             .expect("paiements");
     assert!(statuses.iter().all(|(s,)| s == "sequestre"));
-    let (event_type,): (String,) =
-        sqlx::query_as("SELECT event_type FROM dispute_events WHERE trade_id = $1::uuid")
-            .bind(&trade)
+    let (shipment_status,): (String,) =
+        sqlx::query_as("SELECT status FROM shipments WHERE id = $1::uuid")
+            .bind(&entrant)
             .fetch_one(&pool)
             .await
-            .expect("journal");
-    assert_eq!(event_type, "livraison_signalee");
+            .expect("colis");
+    assert_eq!(shipment_status, "incident");
     {
         let emails = emails.lock().expect("verrou");
         assert!(emails.iter().any(|e| e.subject.contains("examen manuel")));
@@ -3407,4 +3438,653 @@ async fn evaluation_orpheline_publiee_a_j14(pool: PgPool) {
     assert_eq!(vue_bob["reviews"]["received"]["rating"], 5);
     let profil = body_json(call(&app, request("GET", "/troqueurs/rbob2", None, None)).await).await;
     assert_eq!(profil["reviews_count"], 1);
+}
+
+// ————— Signalements, blocages, litiges (F5.2) —————
+
+/// Requête d'administration : token d'env de test.
+fn admin_request(method: &str, uri: &str, body: Option<serde_json::Value>) -> Request<Body> {
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("x-admin-token", "token-admin-de-test");
+    if body.is_some() {
+        builder = builder.header(header::CONTENT_TYPE, "application/json");
+    }
+    let body = match body {
+        Some(json) => Body::from(json.to_string()),
+        None => Body::empty(),
+    };
+    builder.body(body).expect("requête admin")
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn litige_envoi_contradictoire_et_resolution_liberation(pool: PgPool) {
+    let (state, emails) = AppState::for_tests(pool.clone());
+    let app = api::router(state.clone());
+    let alice = verified_user_at(&app, &emails, "d1@exemple.fr", "dalice1", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo litigieux", 15_000).await;
+    let bob = verified_user(&app, &emails, "d2@exemple.fr", "dbob1").await;
+    let jeu = publish_valued(&app, &bob, "Jeu litigieux", 4_000).await;
+    let proposal = cash_proposal(&app, &bob, &jeu, &velo, 2_000, "du_proposant").await;
+    let trade = active_shipping_trade(&app, &alice, &bob, &proposal).await;
+
+    // Bob expédie, Alice retire un colis cassé et ouvre un dossier.
+    let colis_bob = shipment_id(&app, &bob, &trade, true).await;
+    call(
+        &app,
+        request(
+            "POST",
+            &format!("/shipments/{colis_bob}/drop"),
+            None,
+            Some(&bob),
+        ),
+    )
+    .await;
+    let entrant = shipment_id(&app, &alice, &trade, false).await;
+    call(
+        &app,
+        request(
+            "POST",
+            &format!("/shipments/{entrant}/pickup"),
+            None,
+            Some(&alice),
+        ),
+    )
+    .await;
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/trades/{trade}/dispute"),
+            Some(serde_json::json!({"reason": "abime", "description": "Cadre fendu."})),
+            Some(&alice),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let vue = body_json(response).await;
+    assert_eq!(vue["status"], "litige_gele");
+    let dispute_id = vue["dispute"]["id"].as_str().expect("dossier").to_string();
+    assert_eq!(vue["dispute"]["can_respond"], false);
+
+    // L'auto-confirmation 72 h est suspendue par le dossier.
+    sqlx::query(
+        "UPDATE shipments SET picked_up_at = now() - interval '80 hours' WHERE id = $1::uuid",
+    )
+    .bind(&entrant)
+    .execute(&pool)
+    .await
+    .expect("antidatage");
+    assert_eq!(
+        api::trade::handlers::auto_confirm_shipments(&state).await,
+        0
+    );
+
+    // Contradictoire : Alice ne peut pas répondre à son propre dossier,
+    // Bob si — une seule fois.
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/disputes/{dispute_id}/respond"),
+            Some(serde_json::json!({"response": "Je conteste."})),
+            Some(&alice),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/disputes/{dispute_id}/respond"),
+            Some(serde_json::json!({"response": "Le colis était nickel au dépôt."})),
+            Some(&bob),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let vue = body_json(response).await;
+    assert_eq!(vue["dispute"]["status"], "en_examen");
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/disputes/{dispute_id}/respond"),
+            Some(serde_json::json!({"response": "Encore."})),
+            Some(&bob),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    // Admin : sans token → 401 ; le dossier apparaît dans la file.
+    let response = call(&app, request("GET", "/admin/disputes", None, None)).await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let response = call(
+        &app,
+        admin_request("GET", "/admin/disputes?status=en_examen", None),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let file = body_json(response).await;
+    assert_eq!(file.as_array().expect("liste").len(), 1);
+    let response = call(
+        &app,
+        admin_request("GET", &format!("/admin/disputes/{dispute_id}"), None),
+    )
+    .await;
+    let dossier = body_json(response).await;
+    assert_eq!(dossier["reason"], "abime");
+    assert_eq!(dossier["response"], "Le colis était nickel au dépôt.");
+
+    // Résolution : libération, Bob en tort → troc annulé, zéro débit,
+    // événement au score de Bob.
+    let response = call(
+        &app,
+        admin_request(
+            "POST",
+            &format!("/admin/disputes/{dispute_id}/resolve"),
+            Some(serde_json::json!({
+                "outcome": "liberation",
+                "penalized_pseudo": "dbob1",
+                "note": "photos probantes"
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let verdict = body_json(response).await;
+    assert_eq!(verdict["penalized_score"], 6);
+    assert_eq!(verdict["sanction"], "avertissement");
+    let (trade_status,): (String,) =
+        sqlx::query_as("SELECT status FROM trades WHERE id = $1::uuid")
+            .bind(&trade)
+            .fetch_one(&pool)
+            .await
+            .expect("troc");
+    assert_eq!(trade_status, "annule");
+    let statuses: Vec<(String,)> =
+        sqlx::query_as("SELECT status FROM payments WHERE trade_id = $1::uuid")
+            .bind(&trade)
+            .fetch_all(&pool)
+            .await
+            .expect("paiements");
+    assert!(statuses.iter().all(|(s,)| s == "annule"));
+    // Déjà tranché → 409.
+    let response = call(
+        &app,
+        admin_request(
+            "POST",
+            &format!("/admin/disputes/{dispute_id}/resolve"),
+            Some(serde_json::json!({"outcome": "rejet"})),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    {
+        let emails = emails.lock().expect("verrou");
+        assert!(emails.iter().any(|e| e.subject.contains("tranché")));
+        assert!(emails
+            .iter()
+            .any(|e| e.subject.contains("au sujet de ton compte")));
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn capture_main_propre_differee_48h_et_litige_post_remise(pool: PgPool) {
+    let (state, emails) = AppState::for_tests(pool.clone());
+    let app = api::router(state.clone());
+    let alice = verified_user_at(&app, &emails, "d3@exemple.fr", "dalice2", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo différé", 15_000).await;
+    let bob = verified_user(&app, &emails, "d4@exemple.fr", "dbob2").await;
+    let jeu = publish_valued(&app, &bob, "Jeu différé", 4_000).await;
+    let proposal = cash_proposal(&app, &bob, &jeu, &velo, 2_000, "du_proposant").await;
+    let trade = accepted_trade(&app, &alice, &proposal).await;
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/trades/{trade}/pay"),
+            Some(serde_json::json!({"card_number": "4970 0000 0000 0000"})),
+            Some(&bob),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let code_alice = trade_view(&app, &alice, &trade).await["my_code"]
+        .as_str()
+        .expect("code")
+        .to_string();
+    let code_bob = trade_view(&app, &bob, &trade).await["my_code"]
+        .as_str()
+        .expect("code")
+        .to_string();
+    for (who, code) in [(&alice, &code_bob), (&bob, &code_alice)] {
+        call(
+            &app,
+            request(
+                "POST",
+                &format!("/trades/{trade}/confirm"),
+                Some(serde_json::json!({"code": code})),
+                Some(who),
+            ),
+        )
+        .await;
+    }
+
+    // La remise ne capture plus : fenêtre de contestation de 48 h.
+    let (payment_status,): (String,) =
+        sqlx::query_as("SELECT status FROM payments WHERE trade_id = $1::uuid")
+            .bind(&trade)
+            .fetch_one(&pool)
+            .await
+            .expect("paiement");
+    assert_eq!(payment_status, "sequestre");
+    api::trade::handlers::maintain_trades(&state).await;
+    let (payment_status,): (String,) =
+        sqlx::query_as("SELECT status FROM payments WHERE trade_id = $1::uuid")
+            .bind(&trade)
+            .fetch_one(&pool)
+            .await
+            .expect("paiement");
+    assert_eq!(
+        payment_status, "sequestre",
+        "48 h non écoulées : pas de capture"
+    );
+
+    // Gherkin : vice découvert sous 48 h → dossier, la capture attend.
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/trades/{trade}/dispute"),
+            Some(serde_json::json!({
+                "reason": "non_conforme",
+                "description": "Le cadre est fissuré sous la peinture."
+            })),
+            Some(&bob),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    sqlx::query("UPDATE trades SET finalized_at = now() - interval '49 hours'")
+        .execute(&pool)
+        .await
+        .expect("antidatage");
+    api::trade::handlers::maintain_trades(&state).await;
+    let (payment_status,): (String,) =
+        sqlx::query_as("SELECT status FROM payments WHERE trade_id = $1::uuid")
+            .bind(&trade)
+            .fetch_one(&pool)
+            .await
+            .expect("paiement");
+    assert_eq!(
+        payment_status, "sequestre",
+        "dossier ouvert : capture suspendue"
+    );
+
+    // Dossier rejeté → la capture différée reprend.
+    let dispute_id: (Uuid,) = sqlx::query_as("SELECT id FROM disputes WHERE trade_id = $1::uuid")
+        .bind(&trade)
+        .fetch_one(&pool)
+        .await
+        .expect("dossier");
+    let response = call(
+        &app,
+        admin_request(
+            "POST",
+            &format!("/admin/disputes/{}/resolve", dispute_id.0),
+            Some(serde_json::json!({"outcome": "rejet", "penalized_pseudo": "dbob2"})),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let verdict = body_json(response).await;
+    assert_eq!(verdict["penalized_score"], 2, "plainte abusive : +2");
+    api::trade::handlers::maintain_trades(&state).await;
+    let (payment_status,): (String,) =
+        sqlx::query_as("SELECT status FROM payments WHERE trade_id = $1::uuid")
+            .bind(&trade)
+            .fetch_one(&pool)
+            .await
+            .expect("paiement");
+    assert_eq!(payment_status, "capture");
+    // Hors fenêtre désormais : plus d'ouverture possible (et un dossier a
+    // déjà existé de toute façon).
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/trades/{trade}/dispute"),
+            Some(serde_json::json!({"reason": "abime", "description": "Trop tard."})),
+            Some(&alice),
+        ),
+    )
+    .await;
+    assert!(matches!(
+        response.status(),
+        StatusCode::BAD_REQUEST | StatusCode::CONFLICT
+    ));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn no_show_j3_et_rejet_degele(pool: PgPool) {
+    let (app, emails) = app(pool.clone());
+    let alice = verified_user_at(&app, &emails, "d5@exemple.fr", "dalice3", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo fantôme", 15_000).await;
+    let bob = verified_user(&app, &emails, "d6@exemple.fr", "dbob3").await;
+    let jeu = publish_valued(&app, &bob, "Jeu fantôme", 4_000).await;
+    let proposal = simple_proposal(&app, &bob, &jeu, &velo).await;
+    let trade = accepted_trade(&app, &alice, &proposal).await;
+
+    // Trop tôt pour déclarer un no-show.
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/trades/{trade}/dispute"),
+            Some(serde_json::json!({"reason": "jamais_venu", "description": "Personne au rendez-vous."})),
+            Some(&alice),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body_json(response).await["error"]["code"], "hors_fenetre");
+
+    sqlx::query("UPDATE trades SET created_at = now() - interval '4 days'")
+        .execute(&pool)
+        .await
+        .expect("antidatage");
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/trades/{trade}/dispute"),
+            Some(serde_json::json!({"reason": "jamais_venu", "description": "Personne au rendez-vous."})),
+            Some(&alice),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_json(response).await["status"], "litige_gele");
+
+    // Rejet (parole contre parole) → le troc reprend, personne n'est pénalisé.
+    let dispute_id: (Uuid,) = sqlx::query_as("SELECT id FROM disputes WHERE trade_id = $1::uuid")
+        .bind(&trade)
+        .fetch_one(&pool)
+        .await
+        .expect("dossier");
+    let response = call(
+        &app,
+        admin_request(
+            "POST",
+            &format!("/admin/disputes/{}/resolve", dispute_id.0),
+            Some(serde_json::json!({"outcome": "rejet"})),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let (trade_status,): (String,) =
+        sqlx::query_as("SELECT status FROM trades WHERE id = $1::uuid")
+            .bind(&trade)
+            .fetch_one(&pool)
+            .await
+            .expect("troc");
+    assert_eq!(trade_status, "accepte");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn blocage_ferme_propositions_messages_et_feed(pool: PgPool) {
+    let (app, emails) = app(pool.clone());
+    let alice = verified_user_at(&app, &emails, "d7@exemple.fr", "dalice4", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo bloqué", 15_000).await;
+    let bob = verified_user(&app, &emails, "d8@exemple.fr", "dbob4").await;
+    let jeu = publish_valued(&app, &bob, "Jeu bloqué", 4_000).await;
+    let proposal = simple_proposal(&app, &bob, &jeu, &velo).await;
+
+    // Alice bloque Bob : la proposition en attente devient caduque.
+    let response = call(
+        &app,
+        request("POST", "/users/dbob4/block", None, Some(&alice)),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let (proposal_status,): (String,) =
+        sqlx::query_as("SELECT status FROM proposals WHERE id = $1::uuid")
+            .bind(&proposal)
+            .fetch_one(&pool)
+            .await
+            .expect("proposition");
+    assert_eq!(proposal_status, "caduque");
+
+    // Plus de nouvelle proposition (message neutre), dans les deux sens.
+    let response = call(
+        &app,
+        request(
+            "POST",
+            "/proposals",
+            Some(serde_json::json!({
+                "offered_item_ids": [jeu], "requested_item_ids": [velo]
+            })),
+            Some(&bob),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        body_json(response).await["error"]["code"],
+        "propositions_fermees"
+    );
+
+    // Plus de message sur la conversation pré-acceptation.
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/proposals/{proposal}/messages"),
+            Some(serde_json::json!({"body": "Allo ?"})),
+            Some(&bob),
+        ),
+    )
+    .await;
+    assert!(matches!(
+        response.status(),
+        StatusCode::FORBIDDEN | StatusCode::BAD_REQUEST
+    ));
+
+    // Masquage bidirectionnel de la recherche.
+    let response = call(
+        &app,
+        request("GET", "/search?q=bloqu%C3%A9", None, Some(&bob)),
+    )
+    .await;
+    let resultats = body_json(response).await;
+    let titres: Vec<String> = resultats["items"]
+        .as_array()
+        .unwrap_or(&Vec::new())
+        .iter()
+        .filter_map(|i| i["title"].as_str().map(String::from))
+        .collect();
+    assert!(
+        !titres.iter().any(|t| t.contains("Vélo bloqué")),
+        "l'objet d'Alice ne doit plus apparaître pour Bob : {titres:?}"
+    );
+
+    // Mes blocages, puis déblocage : tout rouvre.
+    let response = call(&app, request("GET", "/me/blocks", None, Some(&alice))).await;
+    assert_eq!(body_json(response).await["pseudos"][0], "dbob4");
+    let response = call(
+        &app,
+        request("DELETE", "/users/dbob4/block", None, Some(&alice)),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let response = call(
+        &app,
+        request(
+            "POST",
+            "/proposals",
+            Some(serde_json::json!({
+                "offered_item_ids": [jeu], "requested_item_ids": [velo]
+            })),
+            Some(&bob),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn score_bannissement_automatique_et_levee(pool: PgPool) {
+    let (state, emails) = AppState::for_tests(pool.clone());
+    let app = api::router(state.clone());
+    let alice = verified_user_at(&app, &emails, "d9@exemple.fr", "dalice5", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo sanction", 15_000).await;
+    let bob = verified_user(&app, &emails, "d10@exemple.fr", "dbob5").await;
+    let jeu = publish_valued(&app, &bob, "Jeu sanction", 4_000).await;
+    let proposal = simple_proposal(&app, &bob, &jeu, &velo).await;
+    let trade = finalized_trade(&app, &alice, &bob, &proposal).await;
+
+    // Passif chargé (10 pts) + contrefaçon avérée (15 pts) = bannissement.
+    let bob_id: (Uuid,) = sqlx::query_as("SELECT id FROM users WHERE pseudo = 'dbob5'")
+        .fetch_one(&pool)
+        .await
+        .expect("bob");
+    for _ in 0..2 {
+        sqlx::query(
+            "INSERT INTO dispute_events (trade_id, event_type, culprit_id, details) \
+             VALUES ($1::uuid, 'non_depot', $2, 'passif')",
+        )
+        .bind(&trade)
+        .bind(bob_id.0)
+        .execute(&pool)
+        .await
+        .expect("événement");
+    }
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/trades/{trade}/dispute"),
+            Some(serde_json::json!({
+                "reason": "contrefacon",
+                "description": "Ce n'est pas un vrai Kapla."
+            })),
+            Some(&alice),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let dispute_id: (Uuid,) = sqlx::query_as("SELECT id FROM disputes WHERE trade_id = $1::uuid")
+        .bind(&trade)
+        .fetch_one(&pool)
+        .await
+        .expect("dossier");
+    let response = call(
+        &app,
+        admin_request(
+            "POST",
+            &format!("/admin/disputes/{}/resolve", dispute_id.0),
+            Some(serde_json::json!({"outcome": "liberation", "penalized_pseudo": "dbob5"})),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let verdict = body_json(response).await;
+    assert_eq!(verdict["penalized_score"], 25);
+    assert_eq!(verdict["sanction"], "bannissement");
+
+    // Sessions révoquées + connexion refusée.
+    let response = call(
+        &app,
+        request(
+            "POST",
+            "/auth/login",
+            Some(serde_json::json!({"email": "d10@exemple.fr", "password": "un-bon-mot-de-passe"})),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        body_json(response).await["error"]["code"],
+        "compte_suspendu"
+    );
+
+    // Filet admin : levée des sanctions → connexion possible.
+    let response = call(
+        &app,
+        admin_request("POST", "/admin/users/dbob5/lift-sanctions", None),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let response = call(
+        &app,
+        request(
+            "POST",
+            "/auth/login",
+            Some(serde_json::json!({"email": "d10@exemple.fr", "password": "un-bon-mot-de-passe"})),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn signalements_types_valides(pool: PgPool) {
+    let (app, emails) = app(pool);
+    let alice = verified_user_at(&app, &emails, "d11@exemple.fr", "dalice6", "44300").await;
+    let cible = Uuid::new_v4();
+
+    let ok = call(
+        &app,
+        request(
+            "POST",
+            "/reports",
+            Some(serde_json::json!({
+                "target_type": "utilisateur", "target_id": cible,
+                "reason": "arnaque_suspectee", "comment": "Demande un virement hors app."
+            })),
+            Some(&alice),
+        ),
+    )
+    .await;
+    assert_eq!(ok.status(), StatusCode::CREATED);
+
+    // Motif d'une autre cible → refusé ; « autre » sans précision → refusé.
+    let ko = call(
+        &app,
+        request(
+            "POST",
+            "/reports",
+            Some(serde_json::json!({
+                "target_type": "message", "target_id": cible, "reason": "spam_doublon"
+            })),
+            Some(&alice),
+        ),
+    )
+    .await;
+    assert_eq!(ko.status(), StatusCode::BAD_REQUEST);
+    let ko = call(
+        &app,
+        request(
+            "POST",
+            "/reports",
+            Some(serde_json::json!({
+                "target_type": "utilisateur", "target_id": cible, "reason": "autre"
+            })),
+            Some(&alice),
+        ),
+    )
+    .await;
+    assert_eq!(ko.status(), StatusCode::BAD_REQUEST);
+    {
+        let emails = emails.lock().expect("verrou");
+        assert!(emails
+            .iter()
+            .any(|e| e.text.contains("signalement utilisateur")));
+    }
 }

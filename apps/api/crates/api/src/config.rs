@@ -15,6 +15,9 @@ pub struct AppConfig {
     pub payment_fees_bps: u16,
     /// Destinataire des alertes d'exploitation (litiges gelés).
     pub admin_email: String,
+    /// Token des endpoints d'administration (F5.2) — header X-Admin-Token,
+    /// doublé d'une basic auth Traefik sur le chemin. Rôle en base : F6.1.
+    pub admin_token: String,
 }
 
 impl AppConfig {
@@ -32,6 +35,7 @@ impl AppConfig {
             analytics_salt,
             payment_fees_bps: 0,
             admin_email: "admin@lebontroc.brianplus.com".to_string(),
+            admin_token: "token-admin-de-test".to_string(),
         }
     }
 
@@ -57,6 +61,12 @@ impl AppConfig {
         if let Ok(admin_email) = std::env::var("ADMIN_EMAIL") {
             config.admin_email = admin_email;
         }
+        let admin_token =
+            std::env::var("ADMIN_TOKEN").map_err(|_| anyhow::anyhow!("ADMIN_TOKEN manquante"))?;
+        if admin_token.len() < 24 {
+            anyhow::bail!("ADMIN_TOKEN trop courte (24 caractères minimum)");
+        }
+        config.admin_token = admin_token;
         Ok(config)
     }
 }

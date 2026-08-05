@@ -46,6 +46,7 @@ services:
       COOKIE_SECURE: "false"
       APP_BASE_URL: http://localhost:3000
       ANALYTICS_SALT: sel-de-ci
+      ADMIN_TOKEN: token-admin-de-ci-token-admin-de-ci
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
       S3_ENDPOINT: http://minio:9000

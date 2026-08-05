@@ -271,13 +271,25 @@ pub async fn expire_unpaid_trade(
     Ok((parties, released))
 }
 
-/// Les paiements séquestrés d'un troc finalisé dont la capture a échoué au
-/// moment de la remise — la maintenance horaire retente.
-pub async fn payments_to_capture(pool: &PgPool) -> sqlx::Result<Vec<Payment>> {
+/// Les paiements séquestrés capturables : troc finalisé, aucun dossier de
+/// litige en cours, et — main propre — fenêtre de contestation de 48 h
+/// écoulée (F5.2 : la capture main propre est différée, choix produit).
+/// Les captures envoi échouées au moment de la finalisation repassent
+/// aussi par ici.
+pub async fn payments_to_capture(
+    pool: &PgPool,
+    main_propre_delay_hours: i64,
+) -> sqlx::Result<Vec<Payment>> {
     sqlx::query_as::<_, Payment>(&format!(
         "SELECT {PAYMENT_COLUMNS} FROM payments p0 WHERE status = 'sequestre' AND EXISTS ( \
-            SELECT 1 FROM trades t WHERE t.id = p0.trade_id AND t.status = 'finalise')"
+            SELECT 1 FROM trades t WHERE t.id = p0.trade_id AND t.status = 'finalise' \
+              AND (t.delivery_mode <> 'main_propre' \
+                   OR t.finalized_at < now() - make_interval(hours => $1::int))) \
+         AND NOT EXISTS ( \
+            SELECT 1 FROM disputes d \
+            WHERE d.trade_id = p0.trade_id AND d.status <> 'tranche')"
     ))
+    .bind(main_propre_delay_hours)
     .fetch_all(pool)
     .await
 }

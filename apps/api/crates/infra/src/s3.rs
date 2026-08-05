@@ -23,6 +23,9 @@ pub enum PhotoStore {
         presign: Client,
         bucket: String,
         public_base: String,
+        /// Lecture anonyme (photos d'objets) ou bucket privé (pièces de
+        /// litige, servies uniquement en GET présigné).
+        public: bool,
     },
     /// Enregistre les clés présignées ; `object_exists` = clé présignée avant.
     Mock(Arc<Mutex<HashSet<String>>>),
@@ -55,6 +58,41 @@ impl PhotoStore {
             presign: build_client(public_endpoint, access_key, secret_key, region),
             bucket: bucket.to_owned(),
             public_base: format!("{}/{}", public_endpoint.trim_end_matches('/'), bucket),
+            public: true,
+        }
+    }
+
+    /// Store privé : pas de policy publique, lecture par GET présigné.
+    pub fn s3_private(
+        endpoint: &str,
+        public_endpoint: &str,
+        bucket: &str,
+        access_key: &str,
+        secret_key: &str,
+        region: &str,
+    ) -> Self {
+        match Self::s3(
+            endpoint,
+            public_endpoint,
+            bucket,
+            access_key,
+            secret_key,
+            region,
+        ) {
+            PhotoStore::S3 {
+                internal,
+                presign,
+                bucket,
+                public_base,
+                ..
+            } => PhotoStore::S3 {
+                internal,
+                presign,
+                bucket,
+                public_base,
+                public: false,
+            },
+            mock => mock,
         }
     }
 
@@ -74,7 +112,10 @@ impl PhotoStore {
     /// Idempotent, appelé au démarrage.
     pub async fn ensure_bucket(&self) -> anyhow::Result<()> {
         let PhotoStore::S3 {
-            internal, bucket, ..
+            internal,
+            bucket,
+            public,
+            ..
         } = self
         else {
             return Ok(());
@@ -86,6 +127,10 @@ impl PhotoStore {
             {
                 return Err(anyhow::anyhow!("création du bucket : {service_error}"));
             }
+        }
+        if !*public {
+            tracing::info!(bucket, "bucket privé prêt (accès présigné uniquement)");
+            return Ok(());
         }
         let policy = format!(
             r#"{{"Version":"2012-10-17","Statement":[{{"Effect":"Allow","Principal":{{"AWS":["*"]}},"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::{bucket}/*"]}}]}}"#
@@ -129,6 +174,26 @@ impl PhotoStore {
                 keys.lock().expect("verrou mock s3").insert(key.to_owned());
                 Ok(format!("http://mock-s3/upload/{key}"))
             }
+        }
+    }
+
+    /// URL présignée de GET — seul accès de lecture aux buckets privés.
+    pub async fn presign_get(&self, key: &str) -> anyhow::Result<String> {
+        match self {
+            PhotoStore::S3 {
+                presign, bucket, ..
+            } => {
+                let presigned = presign
+                    .get_object()
+                    .bucket(bucket)
+                    .key(key)
+                    .presigned(PresigningConfig::expires_in(Duration::from_secs(
+                        PRESIGN_TTL_SECONDS,
+                    ))?)
+                    .await?;
+                Ok(presigned.uri().to_string())
+            }
+            PhotoStore::Mock(_) => Ok(format!("http://mock-s3/get/{key}")),
         }
     }
 

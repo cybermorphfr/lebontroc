@@ -203,6 +203,24 @@ pub async fn login(
         }
     }
 
+    // F5.2 — compte banni : plus de connexion (les sessions existantes ont
+    // été révoquées au bannissement).
+    let sanctions = infra::dispute_repo::sanction_state(&state.pool, user.id).await?;
+    if sanctions.banned_at.is_some() {
+        telemetry::track(
+            &state,
+            "login_failed",
+            Some(user.id),
+            json!({"reason": "banned"}),
+        )
+        .await;
+        return Err(ApiError::forbidden(
+            "compte_suspendu",
+            "Ce compte est suspendu. Si tu penses qu'il y a une erreur, \
+             écris-nous : un humain te lira.",
+        ));
+    }
+
     if !password::verify_password(user.password_hash.clone(), body.password).await? {
         let lock = if regles::doit_verrouiller(user.failed_login_count + 1) {
             Some(Utc::now() + Duration::minutes(regles::VERROU_DUREE_MINUTES))

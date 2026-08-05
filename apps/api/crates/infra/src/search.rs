@@ -28,6 +28,8 @@ pub struct SearchParams {
     /// Ignoré sans point de vue (visiteur non localisé).
     pub max_km: Option<f64>,
     pub viewer: Option<(f64, f64)>,
+    /// Masquage bidirectionnel des blocages (F5.2) — None pour un visiteur.
+    pub viewer_id: Option<uuid::Uuid>,
     pub limit: i64,
     pub offset: i64,
 }
@@ -86,6 +88,10 @@ impl SearchRepository for PgSearchRepository {
                 JOIN users u ON u.id = i.owner_id \
                 LEFT JOIN communes c ON c.code_postal = u.postal_code \
                 WHERE i.status = 'disponible' AND i.deleted_at IS NULL \
+                  AND ($12::uuid IS NULL OR NOT EXISTS ( \
+                      SELECT 1 FROM user_blocks b \
+                      WHERE (b.blocker_id = $12 AND b.blocked_id = i.owner_id) \
+                         OR (b.blocker_id = i.owner_id AND b.blocked_id = $12))) \
                   AND ($3::text IS NULL \
                        OR i.search_tsv @@ websearch_to_tsquery('french', $3) \
                        OR word_similarity($3, i.title) >= $4) \
@@ -117,6 +123,7 @@ impl SearchRepository for PgSearchRepository {
             .bind(params.max_km)
             .bind(params.limit)
             .bind(params.offset)
+            .bind(params.viewer_id)
             .fetch_all(&self.pool)
             .await?;
         Ok(rows)

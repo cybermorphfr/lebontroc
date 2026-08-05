@@ -20,8 +20,8 @@ use crate::telemetry;
 use crate::trade::dto::{
     AcceptProposalRequest, ConfigureShippingRequest, ConfirmTradeRequest, CreateProposalRequest,
     PayTradeRequest, PaymentInfo, ProposalItemResponse, ProposalResponse, RelayResponse,
-    ReportIssueRequest, ReviewInfo, ReviewReplyRequest, ShipmentInfo, SubmitReviewRequest,
-    TradeDetailResponse, TradeResponse, TradeReviews,
+    ReviewInfo, ReviewReplyRequest, ShipmentInfo, SubmitReviewRequest, TradeDetailResponse,
+    TradeResponse, TradeReviews,
 };
 use crate::AppState;
 
@@ -190,6 +190,26 @@ pub async fn create_proposal(
         return Err(ApiError::bad_request(
             "troc_avec_soi",
             "Troquer avec soi-même, c'est ranger — choisis un autre troqueur.",
+        ));
+    }
+
+    // F5.2 — blocage (dans un sens ou l'autre) : message neutre, jamais
+    // « tu es bloqué ». Restriction : plus de nouvelles propositions.
+    if infra::dispute_repo::is_blocked_either_way(&state.pool, user.user_id, recipient_id).await? {
+        return Err(ApiError::forbidden(
+            "propositions_fermees",
+            "Ce troqueur n'accepte pas de nouvelles propositions.",
+        ));
+    }
+    let sanctions = infra::dispute_repo::sanction_state(&state.pool, user.user_id).await?;
+    if sanctions
+        .restricted_until
+        .is_some_and(|until| until > chrono::Utc::now())
+    {
+        return Err(ApiError::forbidden(
+            "compte_restreint",
+            "Ton compte est restreint : pas de nouvelles propositions pour le moment. \
+             Tes trocs en cours continuent normalement.",
         ));
     }
 
@@ -834,11 +854,12 @@ fn trade_detail_response(
             mine: None,
             received: None,
         },
+        dispute: None,
     }
 }
 
 /// Vue complète du troc : paiements, colis et évaluations compris.
-async fn full_trade_response(
+pub(crate) async fn full_trade_response(
     state: &AppState,
     trade: infra::trade_repo::TradeDetail,
     user_id: Uuid,
@@ -875,10 +896,25 @@ async fn full_trade_response(
             .find(|r| r.reviewee_id == user_id && r.published_at.is_some())
             .map(to_info),
     };
+    response.dispute = infra::dispute_repo::dispute_for_trade(&state.pool, response.id)
+        .await?
+        .map(|d| crate::dispute::dto::DisputeInfo {
+            opened_by_me: d.opened_by == Some(user_id),
+            can_respond: d.status == "ouvert"
+                && d.opened_by != Some(user_id)
+                && d.response.is_none(),
+            id: d.id,
+            reason: d.reason,
+            description: d.description,
+            status: d.status,
+            response: d.response,
+            outcome: d.outcome,
+            opened_at: d.opened_at,
+        });
     Ok(response)
 }
 
-async fn participant_trade(
+pub(crate) async fn participant_trade(
     state: &AppState,
     id: Uuid,
     user_id: Uuid,
@@ -1305,12 +1341,9 @@ pub async fn confirm_trade(
                     json!({"trade_id": id, "days_since_accept": days}),
                 )
                 .await;
-                // Remise confirmée par les deux codes : capturer la soulte.
-                for payment in infra::payment_repo::payments_for_trade(&state.pool, id).await? {
-                    if paiement::peut_capturer(&payment.status) {
-                        capture_payment(&state, &payment).await;
-                    }
-                }
+                // F5.2 : la capture main propre n'est plus immédiate — la
+                // maintenance capturera 48 h après la remise, sauf litige
+                // ouvert dans la fenêtre (choix Brian).
                 return Ok(Json(
                     full_trade_response(&state, trade, user.user_id).await?,
                 ));
@@ -1326,7 +1359,7 @@ pub async fn confirm_trade(
 /// Capture un règlement séquestré (échange abouti) : PSP, transition SQL,
 /// e-mails, télémétrie. En cas d'échec PSP le paiement reste `sequestre` —
 /// la maintenance horaire retentera.
-async fn capture_payment(state: &AppState, payment: &infra::payment_repo::Payment) {
+pub(crate) async fn capture_payment(state: &AppState, payment: &infra::payment_repo::Payment) {
     if let Err(error) = state
         .payments
         .capture(
@@ -1396,7 +1429,7 @@ async fn capture_payment(state: &AppState, payment: &infra::payment_repo::Paymen
 
 /// Libère les paiements d'un troc annulé (préautorisations relâchées) et
 /// prévient les payeurs. Idempotent — sans effet si rien n'était en cours.
-async fn release_payments_if_any(state: &AppState, trade_id: Uuid) {
+pub(crate) async fn release_payments_if_any(state: &AppState, trade_id: Uuid) {
     let payments = match infra::payment_repo::cancel_payments_for_trade(&state.pool, trade_id).await
     {
         Ok(payments) => payments,
@@ -1483,6 +1516,8 @@ pub struct MaintenanceReport {
     pub auto_confirmed: usize,
     /// Évaluations orphelines publiées à J+14 (F5.1).
     pub reviews_published: usize,
+    /// Dossiers passés en examen faute de réponse sous 72 h (F5.2).
+    pub disputes_escalated: usize,
 }
 
 /// Maintenance des trocs : relance J+7, annulation automatique J+14
@@ -1564,6 +1599,17 @@ pub async fn maintain_trades(state: &AppState) -> MaintenanceReport {
         Err(error) => tracing::error!(%error, "publication des évaluations J+14 en échec"),
     }
 
+    // F5.2 — sans réponse contradictoire sous 72 h, le dossier part en examen.
+    match infra::dispute_repo::escalate_unanswered_disputes(
+        &state.pool,
+        domain::dispute::REPONSE_HEURES,
+    )
+    .await
+    {
+        Ok(escalated) => report.disputes_escalated = escalated as usize,
+        Err(error) => tracing::error!(%error, "escalade des dossiers 72 h en échec"),
+    }
+
     report.reminded = reminded;
     report.cancelled = cancelled;
     report
@@ -1590,9 +1636,15 @@ pub async fn maintain_payments(state: &AppState) -> (usize, usize) {
         Err(error) => tracing::error!(%error, "recherche des paiements en retard en échec"),
     }
 
-    // Captures qui avaient échoué à la remise : on retente.
+    // Captures dues : main propre 48 h après la remise (fenêtre litige
+    // F5.2), et rattrapage des captures envoi échouées.
     let mut captures = 0;
-    match infra::payment_repo::payments_to_capture(&state.pool).await {
+    match infra::payment_repo::payments_to_capture(
+        &state.pool,
+        domain::dispute::FENETRE_MAIN_PROPRE_HEURES,
+    )
+    .await
+    {
         Ok(payments) => {
             for payment in payments {
                 capture_payment(state, &payment).await;
@@ -1897,69 +1949,6 @@ pub async fn confirm_parcel(
     ))
 }
 
-/// Un problème avec le colis reçu : le troc est gelé pour examen manuel,
-/// les règlements restent séquestrés (ni capturés ni libérés).
-#[utoipa::path(
-    post,
-    path = "/shipments/{id}/report",
-    tag = "trade",
-    params(("id" = Uuid, Path, description = "Identifiant du colis")),
-    request_body = ReportIssueRequest,
-    responses(
-        (status = 200, description = "Signalement enregistré, troc gelé", body = TradeDetailResponse),
-        (status = 400, description = "Trop tôt ou trop tard pour signaler", body = crate::error::ErrorResponse),
-        (status = 404, description = "Introuvable", body = crate::error::ErrorResponse)
-    )
-)]
-pub async fn report_parcel(
-    State(state): State<AppState>,
-    user: CurrentUser,
-    Path(id): Path<Uuid>,
-    Json(body): Json<ReportIssueRequest>,
-) -> Result<Json<TradeDetailResponse>, ApiError> {
-    let shipment = my_shipment(&state, id, user.user_id).await?;
-    let reason: String = body.reason.trim().chars().take(500).collect();
-    if reason.is_empty() {
-        return Err(ApiError::bad_request(
-            "motif_manquant",
-            "Décris le problème en quelques mots.",
-        ));
-    }
-    let Some(trade_id) =
-        infra::shipping_repo::report_issue(&state.pool, id, user.user_id, &reason).await?
-    else {
-        return Err(ApiError::bad_request(
-            "signalement_impossible",
-            "Un signalement se fait à la réception du colis (arrivé ou retiré).",
-        ));
-    };
-    infra::shipping_repo::record_dispute_event(
-        &state.pool,
-        trade_id,
-        "livraison_signalee",
-        None,
-        Some(&reason),
-    )
-    .await?;
-    telemetry::track(
-        &state,
-        "delivery_issue_reported",
-        Some(user.user_id),
-        json!({"trade_id": trade_id, "shipment_id": id}),
-    )
-    .await;
-    notify_frozen_trade(&state, trade_id, &format!("signalement : {reason}")).await;
-    broadcast_event(
-        &state,
-        [shipment.sender_id, shipment.recipient_id],
-        json!({"type": "trade_updated", "trade_id": trade_id}),
-    );
-    let trade = participant_trade(&state, trade_id, user.user_id).await?;
-    Ok(Json(
-        full_trade_response(&state, trade, user.user_id).await?,
-    ))
-}
-
 /// Finalise le troc envoi si les deux colis sont confirmés : troc
 /// `finalise`, objets `troque`, règlements capturés, e-mails aux deux.
 async fn maybe_finalize_shipping(state: &AppState, trade_id: Uuid) {
@@ -2155,6 +2144,22 @@ async fn maintain_shipping(state: &AppState, report: &mut MaintenanceReport) {
                     {
                         tracing::error!(%error, %trade_id, "journal de litige en échec");
                     }
+                    // F5.2 : dossier système + sanctions automatiques du
+                    // fautif (le non-dépôt pèse 5 points).
+                    if let Err(error) = infra::dispute_repo::open_dispute(
+                        &state.pool,
+                        trade_id,
+                        None,
+                        "non_depot",
+                        "Dossier créé automatiquement : un seul colis déposé à J+5.",
+                    )
+                    .await
+                    {
+                        tracing::error!(%error, %trade_id, "dossier système J+5 en échec");
+                    }
+                    if let Some(culprit) = culprit {
+                        crate::dispute::handlers::apply_score_sanctions(state, culprit).await;
+                    }
                     release_payments_if_any(state, trade_id).await;
                     notify_frozen_trade(state, trade_id, "un seul colis expédié à J+5").await;
                     report.shipping_frozen += 1;
@@ -2182,6 +2187,17 @@ async fn maintain_shipping(state: &AppState, report: &mut MaintenanceReport) {
                         .await
                         {
                             tracing::error!(%error, %trade_id, "journal de litige en échec");
+                        }
+                        if let Err(error) = infra::dispute_repo::open_dispute(
+                            &state.pool,
+                            trade_id,
+                            None,
+                            "non_depot",
+                            "Dossier créé automatiquement : troc envoi toujours ouvert à J+21.",
+                        )
+                        .await
+                        {
+                            tracing::error!(%error, %trade_id, "dossier système J+21 en échec");
                         }
                         notify_frozen_trade(state, trade_id, "troc envoi toujours ouvert à J+21")
                             .await;

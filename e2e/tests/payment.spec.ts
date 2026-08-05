@@ -123,8 +123,9 @@ test("soulte séquestrée : refus simulé, préautorisation, capture à la remis
   await page.getByLabel("Code de l'autre partie").fill(codeAlice);
   await page.getByRole("button", { name: "Confirmer la remise" }).click();
   await expect(page.getByText("Troc finalisé !")).toBeVisible();
-  await expect(page.getByText(/ont été débités et transférés/)).toBeVisible();
+  // F5.2 : la capture attend la fenêtre de contestation de 48 h.
+  await expect(page.getByText(/seront débités sous 48 h/)).toBeVisible();
   await pageAlice.reload();
-  await expect(pageAlice.getByText(/t'ont été transférés/)).toBeVisible();
+  await expect(pageAlice.getByText(/te seront transférés sous 48 h/)).toBeVisible();
   await contexteAlice.close();
 });

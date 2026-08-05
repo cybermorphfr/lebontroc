@@ -9,6 +9,7 @@ import { getCurrentUser } from "@/lib/server-api";
 import { STATUS_PROPOSITION } from "@/lib/format";
 
 import { AcceptButton } from "./AcceptButton";
+import { DisputePanel } from "./DisputePanel";
 import { MeetupPanel } from "./MeetupPanel";
 import { PaymentPanel } from "./PaymentPanel";
 import { ReviewPanel } from "./ReviewPanel";
@@ -148,12 +149,20 @@ export default async function TrocDetailPage({
       )}
 
       {trade ? (
-        <ReviewPanel
-          trade={trade}
-          otherPseudo={
-            proposal.is_proposer ? proposal.recipient_pseudo : proposal.proposer_pseudo
-          }
-        />
+        <>
+          <DisputePanel
+            trade={trade}
+            otherPseudo={
+              proposal.is_proposer ? proposal.recipient_pseudo : proposal.proposer_pseudo
+            }
+          />
+          <ReviewPanel
+            trade={trade}
+            otherPseudo={
+              proposal.is_proposer ? proposal.recipient_pseudo : proposal.proposer_pseudo
+            }
+          />
+        </>
       ) : null}
 
       {proposal.superseded_by ? (

@@ -10,6 +10,192 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/admin/disputes": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "File des dossiers (admin).",
+        "operationId": "admin_list_disputes",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Filtre de statut",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dossiers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AdminDisputeSummary"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/disputes/{id}": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Dossier complet : pièces présignées, paiements, scores (admin).",
+        "operationId": "admin_get_dispute",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant du dossier",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dossier",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminDisputeDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/disputes/{id}/resolve": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Trancher un dossier (admin) : l'issue s'applique via les traits PSP —\ncapture, libération ou rejet — et la partie en tort alimente le score.",
+        "operationId": "admin_resolve_dispute",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant du dossier",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveDisputeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Dossier tranché",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolveDisputeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Issue invalide",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Déjà tranché",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/users/{pseudo}/lift-sanctions": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Lever les sanctions d'un compte (filet des sanctions automatiques).",
+        "operationId": "admin_lift_sanctions",
+        "parameters": [
+          {
+            "name": "pseudo",
+            "in": "path",
+            "description": "Pseudo",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Sanctions levées"
+          },
+          "404": {
+            "description": "Inconnu",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/analytics/track": {
       "post": {
         "tags": [
@@ -322,6 +508,69 @@
                   "items": {
                     "$ref": "#/components/schemas/CategoryNode"
                   }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/disputes/{id}/respond": {
+      "post": {
+        "tags": [
+          "dispute"
+        ],
+        "summary": "Verser sa version au dossier (contradictoire, une seule fois, 72 h).",
+        "operationId": "respond_dispute",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant du dossier",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RespondDisputeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Version enregistrée",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeDetailResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Dossier clos ou déjà répondu",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -885,6 +1134,27 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me/blocks": {
+      "get": {
+        "tags": [
+          "dispute"
+        ],
+        "summary": "Mes blocages (écran réglages).",
+        "operationId": "my_blocks",
+        "responses": {
+          "200": {
+            "description": "Pseudos bloqués",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlockedListResponse"
                 }
               }
             }
@@ -1491,6 +1761,40 @@
         }
       }
     },
+    "/reports": {
+      "post": {
+        "tags": [
+          "dispute"
+        ],
+        "summary": "Signaler un objet, un utilisateur ou un message (motifs typés).\nEnregistré + alerte admin ; le traitement outillé arrive en F6.1.",
+        "operationId": "create_report",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Signalement enregistré"
+          },
+          "400": {
+            "description": "Cible ou motif invalide",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/reviews/{id}/reply": {
       "post": {
         "tags": [
@@ -1795,69 +2099,6 @@
         }
       }
     },
-    "/shipments/{id}/report": {
-      "post": {
-        "tags": [
-          "trade"
-        ],
-        "summary": "Un problème avec le colis reçu : le troc est gelé pour examen manuel,\nles règlements restent séquestrés (ni capturés ni libérés).",
-        "operationId": "report_parcel",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Identifiant du colis",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ReportIssueRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Signalement enregistré, troc gelé",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TradeDetailResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Trop tôt ou trop tard pour signaler",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Introuvable",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/trades/{id}": {
       "get": {
         "tags": [
@@ -2006,6 +2247,135 @@
           },
           "404": {
             "description": "Introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/trades/{id}/dispute": {
+      "post": {
+        "tags": [
+          "dispute"
+        ],
+        "summary": "Ouvrir le dossier de litige du troc (un seul par troc). Gèle le troc\ns'il est en cours ; suspend la capture s'il est finalisé (fenêtre 48 h\nmain propre). Gherkin F5.2 : la soulte reste séquestrée.",
+        "operationId": "open_dispute",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant du troc",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenDisputeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Dossier ouvert",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeDetailResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Motif ou fenêtre invalide",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Un dossier existe déjà",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/trades/{id}/dispute/presign": {
+      "post": {
+        "tags": [
+          "dispute"
+        ],
+        "summary": "Presign des pièces d'un dossier (bucket PRIVÉ) — 5 fichiers, 5 Mo max.",
+        "operationId": "presign_dispute_photos",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant du troc",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PresignRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "URL de PUT présignées",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PresignedPhoto"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Fichier refusé",
             "content": {
               "application/json": {
                 "schema": {
@@ -2303,6 +2673,83 @@
           }
         }
       }
+    },
+    "/users/{pseudo}/block": {
+      "post": {
+        "tags": [
+          "dispute"
+        ],
+        "summary": "Bloquer un troqueur : plus de propositions ni de messages dans les deux\nsens, profils masqués du feed et de la recherche. Les trocs en cours\ncontinuent. L'autre n'est pas prévenu.",
+        "operationId": "block_user",
+        "parameters": [
+          {
+            "name": "pseudo",
+            "in": "path",
+            "description": "Pseudo à bloquer",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Bloqué"
+          },
+          "400": {
+            "description": "Auto-blocage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Inconnu",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "dispute"
+        ],
+        "operationId": "unblock_user",
+        "parameters": [
+          {
+            "name": "pseudo",
+            "in": "path",
+            "description": "Pseudo à débloquer",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Débloqué"
+          },
+          "404": {
+            "description": "Inconnu",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2319,12 +2766,202 @@
           }
         }
       },
+      "AdminDisputeDetail": {
+        "type": "object",
+        "required": [
+          "id",
+          "trade_id",
+          "trade_status",
+          "delivery_mode",
+          "cash_cents",
+          "reason",
+          "description",
+          "status",
+          "proposer_pseudo",
+          "recipient_pseudo",
+          "proposer_score",
+          "recipient_score",
+          "photos",
+          "payments",
+          "opened_at"
+        ],
+        "properties": {
+          "admin_note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cash_cents": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "delivery_mode": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "opened_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "opened_by_pseudo": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outcome": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "payments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminDisputePayment"
+            }
+          },
+          "photos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminDisputePhoto"
+            },
+            "description": "Pièces en URL GET présignées (15 min), uploader identifié."
+          },
+          "proposer_pseudo": {
+            "type": "string"
+          },
+          "proposer_score": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Score de fiabilité interne des deux parties (jamais public)."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "recipient_pseudo": {
+            "type": "string"
+          },
+          "recipient_score": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "response": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "trade_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "trade_status": {
+            "type": "string"
+          }
+        }
+      },
+      "AdminDisputePayment": {
+        "type": "object",
+        "required": [
+          "payer_pseudo",
+          "amount_cents",
+          "status"
+        ],
+        "properties": {
+          "amount_cents": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "payer_pseudo": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "AdminDisputePhoto": {
+        "type": "object",
+        "required": [
+          "uploader_pseudo",
+          "url"
+        ],
+        "properties": {
+          "uploader_pseudo": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "AdminDisputeSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "trade_id",
+          "reason",
+          "status",
+          "opened_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "opened_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "opened_by_pseudo": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "trade_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
       "ApiStatus": {
         "type": "string",
         "enum": [
           "ok",
           "degraded"
         ]
+      },
+      "BlockedListResponse": {
+        "type": "object",
+        "required": [
+          "pseudos"
+        ],
+        "properties": {
+          "pseudos": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
       },
       "CategoryNode": {
         "type": "object",
@@ -2564,6 +3201,59 @@
           "ok",
           "unreachable"
         ]
+      },
+      "DisputeInfo": {
+        "type": "object",
+        "description": "Le dossier de litige d'un troc, vu par une partie.",
+        "required": [
+          "id",
+          "reason",
+          "description",
+          "status",
+          "opened_by_me",
+          "can_respond",
+          "opened_at"
+        ],
+        "properties": {
+          "can_respond": {
+            "type": "boolean",
+            "description": "Je peux encore verser ma version au dossier."
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "opened_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "opened_by_me": {
+            "type": "boolean",
+            "description": "Le dossier a été ouvert par moi (false : autre partie ou système)."
+          },
+          "outcome": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "response": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "description": "ouvert · en_examen · tranche"
+          }
+        }
       },
       "ErrorBody": {
         "type": "object",
@@ -2920,6 +3610,30 @@
           }
         }
       },
+      "OpenDisputeRequest": {
+        "type": "object",
+        "required": [
+          "reason",
+          "description"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "Ce qui ne va pas (obligatoire, 1000 caractères max)."
+          },
+          "photo_keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Clés S3 des pièces déjà uploadées (5 max, bucket privé)."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Motif : non_conforme, abime, manquant, contrefacon, jamais_venu."
+          }
+        }
+      },
       "PayTradeRequest": {
         "type": "object",
         "description": "Préautorisation de la soulte (F4.2). Bêta fermée : paiement simulé —\nn'importe quel numéro plausible réussit, sauf les cartes magiques d'échec.",
@@ -3187,6 +3901,7 @@
       "PublicProfileResponse": {
         "type": "object",
         "required": [
+          "user_id",
           "pseudo",
           "member_since",
           "items",
@@ -3247,6 +3962,11 @@
           "trades_finalized": {
             "type": "integer",
             "format": "int64"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Identifiant public du troqueur (cible des signalements F5.2)."
           }
         }
       },
@@ -3321,15 +4041,99 @@
           }
         }
       },
-      "ReportIssueRequest": {
+      "ReportRequest": {
         "type": "object",
         "required": [
+          "target_type",
+          "target_id",
           "reason"
         ],
         "properties": {
+          "comment": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Précisions libres (1000 caractères max, obligatoire pour « autre »)."
+          },
           "reason": {
             "type": "string",
-            "description": "Ce qui ne va pas (500 caractères max)."
+            "description": "Motif typé selon la cible (voir référentiel F5.2)."
+          },
+          "target_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "target_type": {
+            "type": "string",
+            "description": "objet, utilisateur ou message."
+          }
+        }
+      },
+      "ResolveDisputeRequest": {
+        "type": "object",
+        "required": [
+          "outcome"
+        ],
+        "properties": {
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outcome": {
+            "type": "string",
+            "description": "capture (le troc va au bout, règlements débités) ·\nliberation (préautorisations annulées ; troc annulé s'il ne l'était\npas) · rejet (dossier classé, le parcours reprend)."
+          },
+          "penalized_pseudo": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Partie en tort : alimente le score de fiabilité, les sanctions\nautomatiques s'appliquent aux seuils (5/10/15)."
+          }
+        }
+      },
+      "ResolveDisputeResponse": {
+        "type": "object",
+        "required": [
+          "outcome",
+          "sanction"
+        ],
+        "properties": {
+          "outcome": {
+            "type": "string"
+          },
+          "penalized_score": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Score du pénalisé après journalisation (le cas échéant)."
+          },
+          "sanction": {
+            "type": "string",
+            "description": "Sanction automatique déclenchée : aucune, avertissement,\nrestriction, bannissement."
+          }
+        }
+      },
+      "RespondDisputeRequest": {
+        "type": "object",
+        "required": [
+          "response"
+        ],
+        "properties": {
+          "photo_keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "response": {
+            "type": "string",
+            "description": "Version de l'autre partie (1000 caractères max)."
           }
         }
       },
@@ -3675,6 +4479,17 @@
           },
           "delivery_mode": {
             "type": "string"
+          },
+          "dispute": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DisputeInfo",
+                "description": "Le dossier de litige du troc (F5.2), s'il existe."
+              }
+            ]
           },
           "finalized_at": {
             "type": [

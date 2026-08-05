@@ -606,6 +606,96 @@ impl EmailSender {
         self.send(to, subject, text, html).await
     }
 
+    /// F5.2 — à l'autre partie : un dossier de litige vient d'être ouvert.
+    pub async fn send_dispute_opened(
+        &self,
+        to: &str,
+        pseudo: &str,
+        other_pseudo: &str,
+        reason: &str,
+    ) -> anyhow::Result<()> {
+        let subject = "Un dossier a été ouvert sur ton troc — ta version compte";
+        let text = format!(
+            "Salut {pseudo},\n\n\
+             {other_pseudo} a signalé un problème sur votre troc (motif : \
+             {reason}). Le troc est suspendu le temps de l'examen.\n\n\
+             Tu as 72 h pour donner ta version et joindre tes photos, depuis \
+             la page du troc. Ensuite, l'équipe tranche sous 7 jours.\n\
+             https://lebontroc.brianplus.com/trocs\n\n\
+             L'équipe Lebontroc\n"
+        );
+        let html = format!(
+            r#"<div style="font-family:Figtree,system-ui,sans-serif;background:#f5ead8;color:#201e1d;padding:32px">
+  <div style="max-width:480px;margin:0 auto;background:#ebddc5;border-radius:32px;padding:32px">
+    <p style="font-size:24px;margin:0 0 16px">Lebontroc</p>
+    <p>Salut {pseudo},</p>
+    <p><strong>{other_pseudo}</strong> a signalé un problème sur votre troc (motif&nbsp;: {reason}). Le troc est suspendu le temps de l'examen.</p>
+    <p>Tu as <strong>72&nbsp;h</strong> pour donner ta version et joindre tes photos, depuis la page du troc. Ensuite, l'équipe tranche sous 7&nbsp;jours.</p>
+    <p>L'équipe Lebontroc</p>
+  </div>
+</div>"#
+        );
+        self.send(to, subject, text, html).await
+    }
+
+    /// F5.2 — aux deux parties : le dossier est tranché.
+    pub async fn send_dispute_resolved(
+        &self,
+        to: &str,
+        pseudo: &str,
+        outcome_text: &str,
+    ) -> anyhow::Result<()> {
+        let subject = "Ton dossier de litige est tranché";
+        let text = format!(
+            "Salut {pseudo},\n\n\
+             L'examen de votre troc est terminé : {outcome_text}\n\n\
+             Le détail est visible sur la page du troc.\n\
+             https://lebontroc.brianplus.com/trocs\n\n\
+             L'équipe Lebontroc\n"
+        );
+        let html = format!(
+            r#"<div style="font-family:Figtree,system-ui,sans-serif;background:#f5ead8;color:#201e1d;padding:32px">
+  <div style="max-width:480px;margin:0 auto;background:#ebddc5;border-radius:32px;padding:32px">
+    <p style="font-size:24px;margin:0 0 16px">Lebontroc</p>
+    <p>Salut {pseudo},</p>
+    <p>L'examen de votre troc est terminé&nbsp;: {outcome_text}</p>
+    <p>Le détail est visible sur la page du troc.</p>
+    <p>L'équipe Lebontroc</p>
+  </div>
+</div>"#
+        );
+        self.send(to, subject, text, html).await
+    }
+
+    /// F5.2 — sanction automatique (avertissement, restriction, bannissement).
+    pub async fn send_sanction(
+        &self,
+        to: &str,
+        pseudo: &str,
+        sanction_text: &str,
+    ) -> anyhow::Result<()> {
+        let subject = "Important — au sujet de ton compte Lebontroc";
+        let text = format!(
+            "Salut {pseudo},\n\n\
+             {sanction_text}\n\n\
+             Si tu penses qu'il y a une erreur, réponds à cet e-mail : un \
+             humain te lira.\n\n\
+             L'équipe Lebontroc\n"
+        );
+        let html = format!(
+            r#"<div style="font-family:Figtree,system-ui,sans-serif;background:#f5ead8;color:#201e1d;padding:32px">
+  <div style="max-width:480px;margin:0 auto;background:#ebddc5;border-radius:32px;padding:32px">
+    <p style="font-size:24px;margin:0 0 16px">Lebontroc</p>
+    <p>Salut {pseudo},</p>
+    <p>{sanction_text}</p>
+    <p>Si tu penses qu'il y a une erreur, réponds à cet e-mail&nbsp;: un humain te lira.</p>
+    <p>L'équipe Lebontroc</p>
+  </div>
+</div>"#
+        );
+        self.send(to, subject, text, html).await
+    }
+
     /// F4.2 — aux deux parties : troc annulé faute de paiement dans les temps.
     pub async fn send_trade_payment_expired(
         &self,

@@ -110,6 +110,8 @@ pub struct TradeDetailResponse {
     pub shipments: Vec<ShipmentInfo>,
     /// Les évaluations du troc (F5.1), une fois finalisé.
     pub reviews: TradeReviews,
+    /// Le dossier de litige du troc (F5.2), s'il existe.
+    pub dispute: Option<crate::dispute::dto::DisputeInfo>,
 }
 
 /// Un colis du troc, vu par le lecteur.
@@ -153,12 +155,6 @@ pub struct RelayResponse {
     pub code: String,
     pub name: String,
     pub address: String,
-}
-
-#[derive(Deserialize, ToSchema)]
-pub struct ReportIssueRequest {
-    /// Ce qui ne va pas (500 caractères max).
-    pub reason: String,
 }
 
 // ————— Évaluations (F5.1) —————

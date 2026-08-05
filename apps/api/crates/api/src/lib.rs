@@ -4,6 +4,7 @@
 pub mod auth;
 pub mod catalog;
 pub mod config;
+pub mod dispute;
 pub mod error;
 pub mod extract;
 pub mod health;
@@ -39,6 +40,8 @@ pub struct AppState {
     pub config: Arc<AppConfig>,
     pub mailer: EmailSender,
     pub photos: PhotoStore,
+    /// Pièces des dossiers de litige — bucket PRIVÉ, accès présigné (F5.2).
+    pub dispute_photos: PhotoStore,
     /// Recherche derrière un trait : Postgres au MVP, Meilisearch en V2.
     pub search: Arc<dyn SearchRepository>,
     /// Diffusion temps réel (WebSocket) — broker en mémoire, mono-processus.
@@ -57,6 +60,7 @@ impl AppState {
         config: AppConfig,
         mailer: EmailSender,
         photos: PhotoStore,
+        dispute_photos: PhotoStore,
     ) -> Self {
         let search = Arc::new(PgSearchRepository::new(pool.clone()));
         let (events, _) = broadcast::channel(256);
@@ -66,6 +70,7 @@ impl AppState {
             config: Arc::new(config),
             mailer,
             photos,
+            dispute_photos,
             search,
             events,
             payments: Arc::new(FakePaymentProvider::new()),
@@ -94,6 +99,7 @@ impl AppState {
                 "0.1.0+test".to_string(),
                 config,
                 mailer,
+                PhotoStore::mock(),
                 PhotoStore::mock(),
             ),
             emails,
@@ -129,6 +135,7 @@ pub fn router(state: AppState) -> Router {
         .merge(catalog::router())
         .merge(trade::router())
         .merge(messaging::router())
+        .merge(dispute::router())
         .with_state(state)
         .layer(
             ServiceBuilder::new()

@@ -420,6 +420,9 @@ pub async fn claim_auto_confirmations(pool: &PgPool, hours: i64) -> sqlx::Result
     sqlx::query_scalar(
         "UPDATE shipments SET status = 'confirme', confirmed_at = now(), updated_at = now() \
          WHERE status = 'retire' AND picked_up_at < now() - make_interval(hours => $1::int) \
+           AND NOT EXISTS ( \
+               SELECT 1 FROM disputes d \
+               WHERE d.trade_id = shipments.trade_id AND d.status <> 'tranche') \
          RETURNING trade_id",
     )
     .bind(hours)

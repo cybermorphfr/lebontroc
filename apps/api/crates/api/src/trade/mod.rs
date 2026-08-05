@@ -25,7 +25,6 @@ pub fn router() -> Router<AppState> {
         .route("/shipments/{id}/drop", post(handlers::drop_parcel))
         .route("/shipments/{id}/pickup", post(handlers::pickup_parcel))
         .route("/shipments/{id}/confirm", post(handlers::confirm_parcel))
-        .route("/shipments/{id}/report", post(handlers::report_parcel))
         .route("/trades/{id}/review", post(handlers::submit_review))
         .route("/reviews/{id}/reply", post(handlers::reply_review))
 }

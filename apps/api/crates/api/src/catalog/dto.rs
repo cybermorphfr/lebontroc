@@ -98,6 +98,8 @@ pub struct ItemPhotoResponse {
 
 #[derive(Serialize, ToSchema)]
 pub struct PublicProfileResponse {
+    /// Identifiant public du troqueur (cible des signalements F5.2).
+    pub user_id: Uuid,
     pub pseudo: String,
     /// Ville approximative (jamais le code postal complet).
     pub city: Option<String>,

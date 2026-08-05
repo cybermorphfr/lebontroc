@@ -41,6 +41,39 @@ impl FromRequestParts<AppState> for CurrentUser {
     }
 }
 
+/// Accès aux endpoints d'administration (F5.2) : header `X-Admin-Token`
+/// comparé au token d'environnement — doublé d'une basic auth Traefik sur
+/// le chemin. Un vrai rôle en base attendra le back-office (F6.1).
+#[derive(Debug, Clone, Copy)]
+pub struct AdminAuth;
+
+impl FromRequestParts<AppState> for AdminAuth {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let provided = parts
+            .headers
+            .get("x-admin-token")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        // Comparaison en temps constant : pas d'oracle sur le token.
+        let expected = state.config.admin_token.as_bytes();
+        let ok = provided.len() == expected.len()
+            && provided
+                .bytes()
+                .zip(expected.iter())
+                .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+                == 0;
+        if !ok {
+            return Err(ApiError::unauthorized("Accès réservé à l'administration."));
+        }
+        Ok(AdminAuth)
+    }
+}
+
 impl OptionalFromRequestParts<AppState> for CurrentUser {
     type Rejection = Infallible;
 

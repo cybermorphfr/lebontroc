@@ -519,6 +519,7 @@ pub async fn search(
         accepts_soulte: query.soulte,
         max_km,
         viewer: coords,
+        viewer_id: viewer.map(|v| v.user_id),
         limit: FEED_PAGE_SIZE + 1,
         offset: (i64::from(page) - 1) * FEED_PAGE_SIZE,
     };
@@ -756,6 +757,7 @@ pub async fn public_profile(
     .await;
 
     Ok(Json(PublicProfileResponse {
+        user_id: owner.id,
         pseudo: owner.pseudo,
         city,
         member_since: owner.created_at,

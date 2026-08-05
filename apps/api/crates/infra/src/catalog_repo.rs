@@ -288,6 +288,10 @@ pub async fn list_feed_items(
             LEFT JOIN communes c ON c.code_postal = u.postal_code \
             WHERE i.status = 'disponible' AND i.deleted_at IS NULL \
               AND ($3::uuid IS NULL OR i.owner_id <> $3) \
+              AND ($3::uuid IS NULL OR NOT EXISTS ( \
+                  SELECT 1 FROM user_blocks b \
+                  WHERE (b.blocker_id = $3 AND b.blocked_id = i.owner_id) \
+                     OR (b.blocker_id = i.owner_id AND b.blocked_id = $3))) \
          ) AS t \
          ORDER BY COALESCE(t.distance_km, 800.0) / 25.0 \
                   + EXTRACT(EPOCH FROM (now() - t.created_at)) / 86400.0 \

@@ -5,6 +5,7 @@ pub mod analytics;
 pub mod auth_repo;
 pub mod catalog_repo;
 pub mod db;
+pub mod dispute_repo;
 pub mod email;
 pub mod favorites_repo;
 pub mod message_repo;

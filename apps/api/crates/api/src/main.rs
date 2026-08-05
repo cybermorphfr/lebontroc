@@ -29,6 +29,7 @@ async fn main() -> anyhow::Result<()> {
     let config = api::config::AppConfig::from_env()?;
     let mailer = mailer_from_env()?;
     let photos = photo_store_from_env()?;
+    let dispute_photos = dispute_store_from_env()?;
 
     // La base peut mettre quelques secondes à accepter les connexions au
     // démarrage de la stack : on retente avant d'abandonner.
@@ -40,9 +41,12 @@ async fn main() -> anyhow::Result<()> {
         // échouera proprement tant que le bucket manque.
         tracing::error!(%error, "initialisation du bucket photos en échec");
     }
+    if let Err(error) = dispute_photos.ensure_bucket().await {
+        tracing::error!(%error, "initialisation du bucket litiges en échec");
+    }
     spawn_orphan_purge(pool.clone(), photos.clone());
 
-    let state = AppState::new(pool, version, config, mailer, photos);
+    let state = AppState::new(pool, version, config, mailer, photos, dispute_photos);
     spawn_proposal_expiry(state.clone());
     spawn_payment_maintenance(state.clone());
     let app = api::router(state);
@@ -85,6 +89,29 @@ fn photo_store_from_env() -> anyhow::Result<infra::s3::PhotoStore> {
         std::env::var("S3_SECRET_KEY").map_err(|_| anyhow::anyhow!("S3_SECRET_KEY manquante"))?;
     let region = std::env::var("S3_REGION").unwrap_or_else(|_| "us-east-1".to_string());
     Ok(infra::s3::PhotoStore::s3(
+        &endpoint,
+        &public_endpoint,
+        &bucket,
+        &access_key,
+        &secret_key,
+        &region,
+    ))
+}
+
+/// Bucket PRIVÉ des pièces de litige (F5.2) — jamais de lecture anonyme.
+fn dispute_store_from_env() -> anyhow::Result<infra::s3::PhotoStore> {
+    let endpoint =
+        std::env::var("S3_ENDPOINT").map_err(|_| anyhow::anyhow!("S3_ENDPOINT manquante"))?;
+    let public_endpoint = std::env::var("S3_PUBLIC_ENDPOINT")
+        .map_err(|_| anyhow::anyhow!("S3_PUBLIC_ENDPOINT manquante"))?;
+    let bucket =
+        std::env::var("S3_DISPUTE_BUCKET").unwrap_or_else(|_| "lebontroc-litiges".to_string());
+    let access_key =
+        std::env::var("S3_ACCESS_KEY").map_err(|_| anyhow::anyhow!("S3_ACCESS_KEY manquante"))?;
+    let secret_key =
+        std::env::var("S3_SECRET_KEY").map_err(|_| anyhow::anyhow!("S3_SECRET_KEY manquante"))?;
+    let region = std::env::var("S3_REGION").unwrap_or_else(|_| "us-east-1".to_string());
+    Ok(infra::s3::PhotoStore::s3_private(
         &endpoint,
         &public_endpoint,
         &bucket,

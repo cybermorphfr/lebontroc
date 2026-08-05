@@ -138,7 +138,6 @@ export function ShippingPanel({ trade }: { trade: TradeDetailResponse }) {
                 shipment={incoming}
                 busy={busy}
                 onConfirm={() => post(`/shipments/${incoming.id}/confirm`)}
-                onReport={(reason) => post(`/shipments/${incoming.id}/report`, { reason })}
               />
             ) : null}
             {incoming.status === "confirme" ? (
@@ -281,15 +280,11 @@ function ConfirmOrReport({
   shipment,
   busy,
   onConfirm,
-  onReport,
 }: {
   shipment: Shipment;
   busy: boolean;
   onConfirm: () => void;
-  onReport: (reason: string) => void;
 }) {
-  const [reporting, setReporting] = useState(false);
-  const [reason, setReason] = useState("");
   const deadline = shipment.confirmation_deadline
     ? new Date(shipment.confirmation_deadline).toLocaleString("fr-FR", {
         day: "numeric",
@@ -298,39 +293,6 @@ function ConfirmOrReport({
         minute: "2-digit",
       })
     : null;
-
-  if (reporting) {
-    return (
-      <div className="flex flex-col gap-2">
-        <label htmlFor="issue" className="text-xs text-neutre-700">
-          Décris le problème (objet abîmé, non conforme, manquant…)
-        </label>
-        <textarea
-          id="issue"
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-          maxLength={500}
-          rows={3}
-          className="rounded-2xl border border-neutre-300 bg-creme px-3 py-2 text-sm outline-none focus:border-terracotta-500"
-        />
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => onReport(reason)}
-            disabled={busy || reason.trim().length === 0}
-            className="flex min-h-11 cursor-pointer items-center justify-center rounded-full bg-terracotta-800 px-5 font-display text-sm text-creme disabled:opacity-60"
-          >
-            Envoyer le signalement
-          </button>
-          <button
-            onClick={() => setReporting(false)}
-            className="flex min-h-11 cursor-pointer items-center justify-center rounded-full px-4 text-sm text-neutre-700 hover:bg-encre/5"
-          >
-            Annuler
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="flex flex-col gap-2">
@@ -348,12 +310,14 @@ function ConfirmOrReport({
         >
           Tout est OK ✓
         </button>
-        <button
-          onClick={() => setReporting(true)}
+        {/* F5.2 : le signalement passe par le dossier de litige (motifs
+            typés + photos), plus bas sur la page. */}
+        <a
+          href="#litige"
           className="text-xs text-neutre-700 underline hover:text-terracotta-700"
         >
           Signaler un problème
-        </button>
+        </a>
       </div>
     </div>
   );

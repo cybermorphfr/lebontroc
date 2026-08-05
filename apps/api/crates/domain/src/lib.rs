@@ -6,6 +6,7 @@
 
 pub mod auth;
 pub mod catalog;
+pub mod dispute;
 pub mod health;
 pub mod moderation;
 pub mod payment;

@@ -111,11 +111,30 @@ pub async fn send_message(
     Json(body): Json<SendMessageRequest>,
 ) -> Result<(StatusCode, Json<MessageResponse>), ApiError> {
     let proposal = participant_proposal(&state, id, user.user_id).await?;
-    if matches!(proposal.status.as_str(), "refusee" | "expiree") {
+    if matches!(proposal.status.as_str(), "refusee" | "expiree" | "caduque") {
         return Err(ApiError::bad_request(
             "conversation_fermee",
             "Cette proposition est close — retente ta chance avec une nouvelle proposition.",
         ));
+    }
+    // F5.2 — un blocage ferme les conversations pré-acceptation ; celles
+    // des trocs acceptés continuent (un blocage ne rend jamais un troc en
+    // cours infinissable). Message neutre, jamais « tu es bloqué ».
+    if matches!(
+        proposal.status.as_str(),
+        "envoyee" | "vue" | "contre_proposee"
+    ) {
+        let other_id = if proposal.proposer_id == user.user_id {
+            proposal.recipient_id
+        } else {
+            proposal.proposer_id
+        };
+        if infra::dispute_repo::is_blocked_either_way(&state.pool, user.user_id, other_id).await? {
+            return Err(ApiError::forbidden(
+                "conversation_fermee",
+                "Cette conversation n'est plus disponible.",
+            ));
+        }
     }
 
     let texte = body
