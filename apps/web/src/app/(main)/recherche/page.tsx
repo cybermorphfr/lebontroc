@@ -14,9 +14,9 @@ export const dynamic = "force-dynamic";
 export default async function RecherchePage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string }>;
+  searchParams: Promise<{ q?: string; categorie?: string }>;
 }) {
-  const [{ q }, user] = await Promise.all([searchParams, getCurrentUser()]);
+  const [{ q, categorie }, user] = await Promise.all([searchParams, getCurrentUser()]);
   const client = createApiClient(process.env.API_INTERNAL_URL ?? "http://localhost:8080");
   const { data: categories } = await client.GET("/categories", { cache: "no-store" });
 
@@ -25,6 +25,7 @@ export default async function RecherchePage({
       <SearchClient
         roots={(categories ?? []).map((c) => ({ id: c.id, label: c.label }))}
         initialQuery={q ?? ""}
+        initialCategoryId={categorie ?? ""}
         loggedIn={user !== null}
       />
     </main>

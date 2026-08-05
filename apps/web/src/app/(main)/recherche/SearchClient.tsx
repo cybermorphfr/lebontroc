@@ -71,14 +71,19 @@ function buildParams(q: string, filters: Filters, sort: string, page: number): s
 export function SearchClient({
   roots,
   initialQuery,
+  initialCategoryId = "",
   loggedIn,
 }: {
   roots: { id: number; label: string }[];
   initialQuery: string;
+  initialCategoryId?: string;
   loggedIn: boolean;
 }) {
   const [q, setQ] = useState(initialQuery);
-  const [filters, setFilters] = useState<Filters>(AUCUN_FILTRE);
+  const [filters, setFilters] = useState<Filters>({
+    ...AUCUN_FILTRE,
+    categoryId: initialCategoryId,
+  });
   const [sort, setSort] = useState("pertinence");
   const [items, setItems] = useState<FeedCard[]>([]);
   const [page, setPage] = useState(1);
