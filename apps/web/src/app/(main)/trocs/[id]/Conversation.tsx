@@ -1,21 +1,54 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import type { MessageResponse } from "@lebontroc/api-client";
 
+import { AvatarLetter } from "@/components/AvatarLetter";
 import { apiFetch, apiError } from "@/lib/client-api";
+import { timeAgo } from "@/lib/format";
 import { compressImage } from "@/lib/photos";
 import { useRealtime } from "@/lib/realtime";
 
-/** Fil de conversation temps réel sous la carte de proposition épinglée. */
+/** Messages consécutifs du même auteur à moins de 10 min : un seul groupe. */
+const GROUPE_MS = 10 * 60 * 1000;
+
+type Groupe = { mine: boolean; items: MessageResponse[] };
+
+function grouper(messages: MessageResponse[], myPseudo: string): Groupe[] {
+  const groupes: Groupe[] = [];
+  for (const message of messages) {
+    const mine = message.sender_pseudo === myPseudo;
+    const dernier = groupes[groupes.length - 1];
+    const precedent = dernier?.items[dernier.items.length - 1];
+    const ecart = precedent
+      ? new Date(message.created_at).getTime() - new Date(precedent.created_at).getTime()
+      : Number.POSITIVE_INFINITY;
+    if (dernier && dernier.mine === mine && ecart < GROUPE_MS) {
+      dernier.items.push(message);
+    } else {
+      groupes.push({ mine, items: [message] });
+    }
+  }
+  return groupes;
+}
+
+/**
+ * Fil de conversation temps réel, dans les codes des messageries de
+ * marketplace (Vinted) : en-tête interlocuteur, bulles groupées avec
+ * avatar côté reçu, horodatage relatif centré, accusé « Vu », barre de
+ * saisie en pilule avec photo et flèche d'envoi.
+ */
 export function Conversation({
   proposalId,
   myPseudo,
+  otherPseudo,
   initialMessages,
   closed,
 }: {
   proposalId: string;
   myPseudo: string;
+  otherPseudo: string;
   initialMessages: MessageResponse[];
   closed: boolean;
 }) {
@@ -121,114 +154,168 @@ export function Conversation({
     }
   }
 
-  return (
-    <section className="flex flex-col gap-3">
-      <h2 className="font-display text-lg">Conversation</h2>
+  const groupes = grouper(messages, myPseudo);
+  const dernier = messages[messages.length - 1];
+  const vu = dernier?.sender_pseudo === myPseudo && dernier.read_at !== null;
 
-      <div className="flex max-h-[50vh] min-h-32 flex-col gap-2 overflow-y-auto rounded-[24px] bg-sable p-4">
+  return (
+    <section className="flex flex-col overflow-hidden rounded-[28px] bg-sable shadow-sm">
+      <header className="flex items-center gap-3 border-b border-encre/10 px-4 py-3">
+        <AvatarLetter pseudo={otherPseudo} size="sm" />
+        <Link
+          href={`/troqueur/${encodeURIComponent(otherPseudo)}`}
+          className="font-display text-base text-encre hover:underline"
+        >
+          {otherPseudo}
+        </Link>
+        <Link
+          href={`/troqueur/${encodeURIComponent(otherPseudo)}`}
+          aria-label={`Voir le profil de ${otherPseudo}`}
+          className="ml-auto flex size-8 items-center justify-center rounded-full text-neutre-700 transition-colors hover:bg-encre/7"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <circle cx="12" cy="12" r="10" />
+            <path d="M12 16v-4" />
+            <path d="M12 8h.01" />
+          </svg>
+        </Link>
+      </header>
+
+      <div className="flex max-h-[52vh] min-h-40 flex-col gap-3 overflow-y-auto bg-creme/40 px-4 py-4">
         {messages.length === 0 ? (
-          <p className="text-sm text-neutre-700">
+          <p className="py-6 text-center text-sm text-neutre-700">
             Brise la glace — un petit mot met toutes les chances de ton côté.
           </p>
         ) : null}
-        {messages.map((message) => {
-          const mine = message.sender_pseudo === myPseudo;
+
+        {groupes.map((groupe) => {
+          const premier = groupe.items[0];
           return (
-            <div key={message.id} className={`flex flex-col ${mine ? "items-end" : "items-start"}`}>
-              <div
-                className={`max-w-[80%] rounded-3xl px-4 py-2 text-sm ${
-                  mine ? "bg-[#c67139] text-creme" : "bg-creme"
-                }`}
-              >
-                {message.photo_url ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={message.photo_url}
-                    alt="Photo jointe"
-                    className="mb-1 max-h-64 rounded-2xl object-contain"
-                  />
+            <div key={premier.id} className="flex flex-col gap-1">
+              <p className="text-center text-[11px] text-neutre-700">
+                {timeAgo(premier.created_at)}
+              </p>
+              <div className={`flex items-end gap-2 ${groupe.mine ? "flex-row-reverse" : ""}`}>
+                {!groupe.mine ? (
+                  <span className="shrink-0">
+                    <AvatarLetter pseudo={otherPseudo} size="sm" />
+                  </span>
                 ) : null}
-                {message.body ? (
-                  <p className="whitespace-pre-line break-words">{message.body}</p>
-                ) : null}
+                <div
+                  className={`flex min-w-0 flex-col gap-1 ${
+                    groupe.mine ? "items-end" : "items-start"
+                  }`}
+                >
+                  {groupe.items.map((message) => (
+                    <div
+                      key={message.id}
+                      className={`max-w-[min(28rem,80%)] rounded-3xl px-4 py-2.5 text-sm shadow-sm ${
+                        groupe.mine
+                          ? "rounded-br-lg bg-[#c67139] text-creme"
+                          : "rounded-bl-lg bg-creme text-encre"
+                      }`}
+                    >
+                      {message.photo_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={message.photo_url}
+                          alt="Photo jointe"
+                          className="mb-1 max-h-64 rounded-2xl object-contain"
+                        />
+                      ) : null}
+                      {message.body ? (
+                        <p className="whitespace-pre-line break-words">{message.body}</p>
+                      ) : null}
+                      {message.redacted ? (
+                        <p
+                          className={`mt-1 text-[10px] ${
+                            groupe.mine ? "text-creme/80" : "text-neutre-700"
+                          }`}
+                        >
+                          Coordonnées masquées
+                        </p>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
               </div>
-              <span className="mt-0.5 text-[10px] text-neutre-700">
-                {new Intl.DateTimeFormat("fr-FR", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                }).format(new Date(message.created_at))}
-                {mine && message.read_at ? " · Lu" : ""}
-                {message.redacted ? " · Coordonnées masquées" : ""}
-              </span>
             </div>
           );
         })}
+
+        {vu ? <p className="text-right text-[11px] text-neutre-700">Vu</p> : null}
         <div ref={bottom} aria-hidden />
       </div>
 
       {redactedNotice ? (
-        <p className="rounded-3xl bg-terracotta-100/70 px-4 py-2.5 text-xs text-terracotta-800">
+        <p className="border-t border-encre/10 bg-terracotta-100/70 px-4 py-2.5 text-xs text-terracotta-800">
           On a masqué des coordonnées dans ton message. Garder les échanges ici te protège :
           c&apos;est ta seule preuve en cas de souci, et c&apos;est ce qui fait vivre Lebontroc.
           Elles seront partagées automatiquement une fois le troc accepté.
         </p>
       ) : null}
       {error ? (
-        <p className="rounded-full bg-terracotta-100 px-4 py-2 text-sm text-terracotta-800">
+        <p className="border-t border-encre/10 bg-terracotta-100 px-4 py-2.5 text-sm text-terracotta-800">
           {error}
         </p>
       ) : null}
 
-      {closed ? (
-        <p className="text-sm text-neutre-700">
-          Cette proposition est close — la conversation est en lecture seule.
-        </p>
-      ) : (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            void send();
-          }}
-          className="flex items-center gap-2"
-        >
-          <input
-            ref={fileInput}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) void attachPhoto(file);
-              e.target.value = "";
+      <div className="border-t border-encre/10 p-3">
+        {closed ? (
+          <p className="px-2 py-1 text-center text-sm text-neutre-700">
+            Cette proposition est close — la conversation est en lecture seule.
+          </p>
+        ) : (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void send();
             }}
-          />
-          <button
-            type="button"
-            aria-label="Joindre une photo"
-            onClick={() => fileInput.current?.click()}
-            className="flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-full border border-neutre-300 text-encre transition-colors hover:bg-encre/7"
+            className="flex items-center gap-1 rounded-full border border-neutre-300 bg-creme py-1.5 pl-2 pr-1.5 transition-colors focus-within:border-terracotta-500"
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-              <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" />
-              <circle cx="12" cy="13" r="3" />
-            </svg>
-          </button>
-          <input
-            aria-label="Ton message"
-            placeholder="Écris ton message…"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value.slice(0, 2000))}
-            className="min-w-0 flex-1 rounded-full border border-neutre-300 bg-creme px-4 py-2.5 text-sm outline-none transition-colors focus:border-terracotta-500"
-          />
-          <button
-            type="submit"
-            disabled={sending || draft.trim() === ""}
-            className="flex min-h-11 shrink-0 cursor-pointer items-center justify-center rounded-full bg-[#c67139] px-5 font-display text-sm text-creme transition-colors hover:bg-terracotta-600 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Envoyer
-          </button>
-        </form>
-      )}
+            <input
+              ref={fileInput}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) void attachPhoto(file);
+                e.target.value = "";
+              }}
+            />
+            <button
+              type="button"
+              aria-label="Joindre une photo"
+              onClick={() => fileInput.current?.click()}
+              className="flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full text-neutre-700 transition-colors hover:bg-encre/7"
+            >
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" />
+                <circle cx="12" cy="13" r="3" />
+              </svg>
+            </button>
+            <input
+              aria-label="Ton message"
+              placeholder="Envoyer un message"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value.slice(0, 2000))}
+              className="min-w-0 flex-1 bg-transparent px-1 text-sm outline-none placeholder:text-neutre-700"
+            />
+            <button
+              type="submit"
+              aria-label="Envoyer"
+              disabled={sending || draft.trim() === ""}
+              className="flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-[#c67139] text-creme transition-colors hover:bg-terracotta-600 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M5 12h14" />
+                <path d="m12 5 7 7-7 7" />
+              </svg>
+            </button>
+          </form>
+        )}
+      </div>
     </section>
   );
 }

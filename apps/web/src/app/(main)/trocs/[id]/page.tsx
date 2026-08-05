@@ -199,6 +199,9 @@ export default async function TrocDetailPage({
         <Conversation
           proposalId={proposal.id}
           myPseudo={user.pseudo}
+          otherPseudo={
+            proposal.is_proposer ? proposal.recipient_pseudo : proposal.proposer_pseudo
+          }
           initialMessages={messages ?? []}
           closed={!ouverte && proposal.status !== "acceptee"}
         />
