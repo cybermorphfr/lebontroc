@@ -18,6 +18,7 @@ export default async function MainLayout({
       {children}
       <footer className="mx-auto flex w-full max-w-4xl flex-wrap items-center gap-x-4 gap-y-1 px-6 py-8 text-xs text-neutre-700">
         <span>© Lebontroc — le troc, près de chez toi</span>
+        <Link href="/aide" className="underline">Comment ça marche</Link>
         <Link href="/cgu" className="underline">CGU</Link>
         <Link href="/confidentialite" className="underline">Confidentialité</Link>
         <Link href="/mentions-legales" className="underline">Mentions légales</Link>

@@ -65,9 +65,9 @@ export default async function Home() {
               >
                 Publie ton premier objet
               </Link>
-              <a href="#comment" className="text-sm text-neutre-700 underline">
+              <Link href="/aide" className="text-sm text-neutre-700 underline">
                 Comment ça marche ?
-              </a>
+              </Link>
             </div>
           </div>
           <HomeSearch />
