@@ -107,7 +107,8 @@ impl ShippingProvider for FakeShippingProvider {
         let seed: u32 = request
             .reference
             .bytes()
-            .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
+            .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32))
+            % 100_000_000;
         Ok(Label {
             provider_ref: format!("fake-ship-{}", request.reference),
             drop_code: format!("LBT{seed:08}"),
