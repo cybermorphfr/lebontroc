@@ -1,6 +1,7 @@
 //! Couche HTTP de l'API Lebontroc : routes Axum minces, contrat OpenAPI
 //! généré par utoipa. La logique métier vit dans `domain`, l'IO dans `infra`.
 
+pub mod admin;
 pub mod auth;
 pub mod catalog;
 pub mod config;
@@ -138,6 +139,7 @@ pub fn router(state: AppState) -> Router {
         .merge(messaging::router())
         .merge(dispute::router())
         .merge(notification::router())
+        .merge(admin::router())
         .with_state(state)
         .layer(
             ServiceBuilder::new()

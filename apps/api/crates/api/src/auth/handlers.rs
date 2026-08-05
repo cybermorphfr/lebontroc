@@ -561,3 +561,72 @@ pub async fn update_me(
     .map_err(map_unique)?;
     Ok(Json(compte.into()))
 }
+
+// ————— RGPD (F6.3) —————
+
+/// Export JSON de toutes mes données (droit à la portabilité).
+#[utoipa::path(
+    get,
+    path = "/me/export",
+    tag = "me",
+    responses((status = 200, description = "Toutes tes données, en JSON"))
+)]
+pub async fn export_my_data(
+    State(state): State<AppState>,
+    user: CurrentUser,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let data = infra::admin_repo::export_user_data(&state.pool, user.user_id).await?;
+    telemetry::track(&state, "data_exported", Some(user.user_id), json!({})).await;
+    Ok(Json(data))
+}
+
+#[derive(serde::Deserialize, utoipa::ToSchema)]
+pub struct DeleteAccountRequest {
+    /// Mot de passe actuel — on ne supprime pas un compte sur un simple clic.
+    pub password: String,
+}
+
+/// Suppression de compte (droit à l'effacement, Gherkin F6.3) : profil
+/// anonymisé, objets retirés, sessions révoquées. Les trocs finalisés avec
+/// soulte restent en base sous forme anonymisée (obligations comptables).
+/// Refusée tant que des trocs sont en cours.
+#[utoipa::path(
+    delete,
+    path = "/me",
+    tag = "me",
+    request_body = DeleteAccountRequest,
+    responses(
+        (status = 204, description = "Compte supprimé"),
+        (status = 400, description = "Trocs en cours ou mot de passe incorrect", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn delete_my_account(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    jar: CookieJar,
+    Json(body): Json<DeleteAccountRequest>,
+) -> Result<(CookieJar, axum::http::StatusCode), ApiError> {
+    let me = infra::auth_repo::find_user_by_id(&state.pool, user.user_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Compte introuvable."))?;
+    let valid = password::verify_password(me.password_hash, body.password)
+        .await
+        .unwrap_or(false);
+    if !valid {
+        return Err(ApiError::bad_request(
+            "mot_de_passe_incorrect",
+            "Le mot de passe ne correspond pas.",
+        ));
+    }
+    if !infra::admin_repo::delete_account(&state.pool, user.user_id).await? {
+        return Err(ApiError::bad_request(
+            "trocs_en_cours",
+            "Des trocs sont encore en cours : termine-les ou annule-les avant de partir.",
+        ));
+    }
+    telemetry::track(&state, "account_deleted", Some(user.user_id), json!({})).await;
+    let jar = jar
+        .add(cookies::expired_access_cookie(&state.config))
+        .add(cookies::expired_refresh_cookie(&state.config));
+    Ok((jar, axum::http::StatusCode::NO_CONTENT))
+}

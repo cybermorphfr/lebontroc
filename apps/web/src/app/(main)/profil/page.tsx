@@ -10,6 +10,8 @@ import { getCurrentUser, getSessions } from "@/lib/server-api";
 import { LogoutButton } from "./LogoutButton";
 import { ProfileForm } from "./ProfileForm";
 import { SessionsList } from "./SessionsList";
+import { DataPrivacy } from "@/components/DataPrivacy";
+
 import { WishlistForm } from "./WishlistForm";
 
 export const metadata: Metadata = {
@@ -80,6 +82,7 @@ export default async function ProfilPage() {
       </section>
 
       <section className="flex max-w-xl flex-col items-start gap-2 rounded-[32px] bg-sable p-6 shadow-sm">
+        <DataPrivacy />
         <LogoutButton />
       </section>
     </main>

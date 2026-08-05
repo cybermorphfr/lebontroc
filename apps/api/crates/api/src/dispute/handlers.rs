@@ -882,6 +882,14 @@ pub async fn admin_resolve_dispute(
         [trade.proposer_id, trade.recipient_id],
         json!({"type": "trade_updated", "trade_id": trade.id}),
     );
+    crate::admin::handlers::record_admin_action(
+        &state,
+        "dispute_resolved",
+        "trade",
+        &trade.id.to_string(),
+        body.note.as_deref(),
+    )
+    .await;
     Ok(Json(ResolveDisputeResponse {
         outcome: body.outcome,
         penalized_score,
@@ -915,5 +923,13 @@ pub async fn admin_lift_sanctions(
         .await?
         .ok_or_else(|| ApiError::not_found("Ce troqueur n'existe pas."))?;
     infra::dispute_repo::lift_sanctions(&state.pool, target.id).await?;
+    crate::admin::handlers::record_admin_action(
+        &state,
+        "sanctions_lifted",
+        "utilisateur",
+        &target.id.to_string(),
+        Some(&pseudo),
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }

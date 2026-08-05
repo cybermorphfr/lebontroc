@@ -4256,3 +4256,159 @@ async fn preference_coupee_bloque_email_mais_pas_inapp(pool: PgPool) {
         );
     }
 }
+
+// ————— Lot 6 : back-office, RGPD —————
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn admin_signalements_audit_recherche_et_kpis(pool: PgPool) {
+    let (app, emails) = app(pool.clone());
+    let alice = verified_user_at(&app, &emails, "a1@exemple.fr", "aalice1", "44300").await;
+    publish_valued(&app, &alice, "Vélo admin", 15_000).await;
+    let _bob = verified_user(&app, &emails, "a2@exemple.fr", "abob1").await;
+    let bob_id: (Uuid,) = sqlx::query_as("SELECT id FROM users WHERE pseudo = 'abob1'")
+        .fetch_one(&pool)
+        .await
+        .expect("bob");
+
+    // Alice signale Bob ; la file admin le montre, le clôturer « fondé »
+    // pèse +2 au score et se journalise dans l'audit immuable.
+    let response = call(
+        &app,
+        request(
+            "POST",
+            "/reports",
+            Some(serde_json::json!({
+                "target_type": "utilisateur", "target_id": bob_id.0,
+                "reason": "arnaque_suspectee", "comment": "Vente hors app."
+            })),
+            Some(&alice),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let file = body_json(
+        call(
+            &app,
+            admin_request("GET", "/admin/reports?status=nouveau", None),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(file.as_array().expect("liste").len(), 1);
+    let report_id = file[0]["id"].as_str().expect("id").to_string();
+    let response = call(
+        &app,
+        admin_request(
+            "POST",
+            &format!("/admin/reports/{report_id}/close"),
+            Some(serde_json::json!({"outcome": "fonde"})),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let score = infra::dispute_repo::reliability_score(&pool, bob_id.0)
+        .await
+        .expect("score");
+    assert_eq!(score, 2, "signalement fondé = +2");
+    // Déjà traité → 400.
+    let response = call(
+        &app,
+        admin_request(
+            "POST",
+            &format!("/admin/reports/{report_id}/close"),
+            Some(serde_json::json!({"outcome": "rejete"})),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let audit = body_json(call(&app, admin_request("GET", "/admin/audit", None)).await).await;
+    assert!(audit
+        .as_array()
+        .expect("audit")
+        .iter()
+        .any(|e| e["action"] == "report_closed"));
+
+    // Recherche transverse + KPI.
+    let resultats =
+        body_json(call(&app, admin_request("GET", "/admin/search?q=abob1", None)).await).await;
+    assert_eq!(resultats["users"][0]["pseudo"], "abob1");
+    assert_eq!(resultats["users"][0]["score"], 2);
+    let kpis = body_json(call(&app, admin_request("GET", "/admin/kpis", None)).await).await;
+    assert_eq!(kpis["signups"], 2);
+    assert_eq!(kpis["items_published"], 1);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn rgpd_export_et_suppression_anonymisante(pool: PgPool) {
+    let (app, emails) = app(pool.clone());
+    let alice = verified_user_at(&app, &emails, "g1@exemple.fr", "galice1", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo RGPD", 15_000).await;
+    let bob = verified_user(&app, &emails, "g2@exemple.fr", "gbob1").await;
+    let jeu = publish_valued(&app, &bob, "Jeu RGPD", 4_000).await;
+    let proposal = simple_proposal(&app, &bob, &jeu, &velo).await;
+
+    // Export : mes données complètes en JSON.
+    let export = body_json(call(&app, request("GET", "/me/export", None, Some(&bob))).await).await;
+    assert_eq!(export["profil"]["pseudo"], "gbob1");
+    assert_eq!(export["objets"].as_array().expect("objets").len(), 1);
+    assert!(export["profil"]["password_hash"].is_null());
+
+    // Suppression refusée : mauvais mot de passe, puis troc en cours.
+    let response = call(
+        &app,
+        request(
+            "DELETE",
+            "/me",
+            Some(serde_json::json!({"password": "mauvais-mot-de-passe"})),
+            Some(&bob),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let trade = finalized_trade(&app, &alice, &bob, &proposal).await;
+    // (le troc est maintenant finalisé : la suppression redevient possible)
+    let response = call(
+        &app,
+        request(
+            "DELETE",
+            "/me",
+            Some(serde_json::json!({"password": "un-bon-mot-de-passe"})),
+            Some(&bob),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    // Gherkin : profil et objets disparus, troc finalisé conservé anonymisé.
+    let response = call(&app, request("GET", "/troqueurs/gbob1", None, None)).await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let (pseudo, deleted): (String, bool) = sqlx::query_as::<_, (String, bool)>(
+        "SELECT pseudo::text, deleted_at IS NOT NULL FROM users WHERE id = \
+         (SELECT proposer_id FROM proposals WHERE id = $1::uuid)",
+    )
+    .bind(&proposal)
+    .fetch_one(&pool)
+    .await
+    .expect("user");
+    assert!(pseudo.starts_with("parti_"), "pseudo anonymisé : {pseudo}");
+    assert!(deleted);
+    let (trade_status,): (String,) =
+        sqlx::query_as("SELECT status FROM trades WHERE id = $1::uuid")
+            .bind(&trade)
+            .fetch_one(&pool)
+            .await
+            .expect("troc");
+    assert_eq!(trade_status, "finalise", "le troc finalisé reste en base");
+    // Connexion impossible.
+    let response = call(
+        &app,
+        request(
+            "POST",
+            "/auth/login",
+            Some(serde_json::json!({"email": "g2@exemple.fr", "password": "un-bon-mot-de-passe"})),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}

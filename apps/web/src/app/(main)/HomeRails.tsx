@@ -76,7 +76,7 @@ export function HomeRails({ favoriteIds }: { favoriteIds: string[] }) {
         </Rail>
       ) : !hasWishlist ? (
         <Link
-          href="/reglages"
+          href="/profil"
           className="flex items-center justify-between gap-3 rounded-3xl bg-sable px-5 py-3.5 text-sm shadow-sm transition-colors hover:bg-creme"
         >
           <span>

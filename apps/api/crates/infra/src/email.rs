@@ -775,6 +775,16 @@ impl EmailSender {
         self.send(to, subject, text, html).await
     }
 
+    /// F6.2 — récap hebdomadaire des KPI à l'admin.
+    pub async fn send_admin_kpis(&self, to: &str, resume: &str) -> anyhow::Result<()> {
+        let subject = "📊 Lebontroc — les chiffres de la semaine";
+        let text = format!("Les 7 derniers jours :\n\n{resume}\n");
+        let html = format!(
+            r#"<div style="font-family:monospace;padding:24px"><p><strong>Les 7 derniers jours</strong></p><pre>{resume}</pre></div>"#
+        );
+        self.send(to, subject, text, html).await
+    }
+
     /// F5.2 — à l'autre partie : un dossier de litige vient d'être ouvert.
     pub async fn send_dispute_opened(
         &self,

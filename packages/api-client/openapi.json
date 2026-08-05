@@ -10,6 +10,30 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/admin/audit": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Journal d'audit (immuable, 200 dernières actions).",
+        "operationId": "admin_list_audit",
+        "responses": {
+          "200": {
+            "description": "Journal",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AuditDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/disputes": {
       "get": {
         "tags": [
@@ -154,6 +178,140 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/kpis": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "KPI des 7 derniers jours (F6.2) — la même source que l'e-mail hebdo.",
+        "operationId": "admin_kpis",
+        "responses": {
+          "200": {
+            "description": "KPI 7 jours",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KpisDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/reports": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "File des signalements.",
+        "operationId": "admin_list_reports",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "description": "nouveau | traite",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Signalements",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AdminReportDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/reports/{id}/close": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Clore un signalement. `fonde` sur un utilisateur → score + sanctions.",
+        "operationId": "admin_close_report",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant du signalement",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloseReportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Clos"
+          },
+          "400": {
+            "description": "Issue invalide ou déjà traité",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/search": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Recherche transverse : utilisateurs, objets, trocs (pseudo, e-mail,\ntitre ou UUID de troc).",
+        "operationId": "admin_search",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Pseudo, e-mail, titre ou UUID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Résultats",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminSearchResponse"
                 }
               }
             }
@@ -1091,6 +1249,38 @@
           }
         }
       },
+      "delete": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Suppression de compte (droit à l'effacement, Gherkin F6.3) : profil\nanonymisé, objets retirés, sessions révoquées. Les trocs finalisés avec\nsoulte restent en base sous forme anonymisée (obligations comptables).\nRefusée tant que des trocs sont en cours.",
+        "operationId": "delete_my_account",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteAccountRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Compte supprimé"
+          },
+          "400": {
+            "description": "Trocs en cours ou mot de passe incorrect",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "me"
@@ -1182,6 +1372,20 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/me/export": {
+      "get": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Export JSON de toutes mes données (droit à la portabilité).",
+        "operationId": "export_my_data",
+        "responses": {
+          "200": {
+            "description": "Toutes tes données, en JSON"
           }
         }
       }
@@ -3085,12 +3289,227 @@
           }
         }
       },
+      "AdminItemDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "status",
+          "owner_pseudo"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "owner_pseudo": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "AdminReportDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "reporter_pseudo",
+          "target_type",
+          "target_id",
+          "reason",
+          "status",
+          "created_at"
+        ],
+        "properties": {
+          "comment": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "outcome": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "reporter_pseudo": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "target_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "target_type": {
+            "type": "string"
+          }
+        }
+      },
+      "AdminSearchResponse": {
+        "type": "object",
+        "required": [
+          "users",
+          "items",
+          "trades"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminItemDto"
+            }
+          },
+          "trades": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminTradeDto"
+            }
+          },
+          "users": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminUserDto"
+            }
+          }
+        }
+      },
+      "AdminTradeDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "delivery_mode",
+          "proposer_pseudo",
+          "recipient_pseudo",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "delivery_mode": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "proposer_pseudo": {
+            "type": "string"
+          },
+          "recipient_pseudo": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "AdminUserDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "pseudo",
+          "email",
+          "created_at",
+          "score"
+        ],
+        "properties": {
+          "banned_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "email": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "pseudo": {
+            "type": "string"
+          },
+          "restricted_until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "score": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Score de fiabilité interne (jamais public)."
+          }
+        }
+      },
       "ApiStatus": {
         "type": "string",
         "enum": [
           "ok",
           "degraded"
         ]
+      },
+      "AuditDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "action",
+          "target_type",
+          "target_id",
+          "created_at"
+        ],
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "details": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "target_id": {
+            "type": "string"
+          },
+          "target_type": {
+            "type": "string"
+          }
+        }
       },
       "BlockedListResponse": {
         "type": "object",
@@ -3152,6 +3571,18 @@
             ],
             "format": "int32",
             "description": "Fourchette indicative en centimes (héritée de la racine)."
+          }
+        }
+      },
+      "CloseReportRequest": {
+        "type": "object",
+        "required": [
+          "outcome"
+        ],
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "description": "`fonde` (un signalement fondé sur un utilisateur pèse +2 au score)\nou `rejete`."
           }
         }
       },
@@ -3344,6 +3775,18 @@
           "ok",
           "unreachable"
         ]
+      },
+      "DeleteAccountRequest": {
+        "type": "object",
+        "required": [
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string",
+            "description": "Mot de passe actuel — on ne supprime pas un compte sur un simple clic."
+          }
+        }
       },
       "DisputeInfo": {
         "type": "object",
@@ -3715,6 +4158,48 @@
           "value_cents": {
             "type": "integer",
             "format": "int32"
+          }
+        }
+      },
+      "KpisDto": {
+        "type": "object",
+        "required": [
+          "signups",
+          "items_published",
+          "proposals_sent",
+          "trades_created",
+          "trades_finalized",
+          "trades_with_cash",
+          "disputes_opened"
+        ],
+        "properties": {
+          "disputes_opened": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "items_published": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "proposals_sent": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "signups": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "trades_created": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "trades_finalized": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "trades_with_cash": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },

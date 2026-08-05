@@ -49,6 +49,7 @@ async fn main() -> anyhow::Result<()> {
     let state = AppState::new(pool, version, config, mailer, photos, dispute_photos);
     spawn_proposal_expiry(state.clone());
     spawn_payment_maintenance(state.clone());
+    spawn_analytics_jobs(state.clone());
     let app = api::router(state);
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;
@@ -172,6 +173,64 @@ fn spawn_payment_maintenance(state: AppState) {
             let confirmed = api::trade::handlers::auto_confirm_shipments(&state).await;
             if expired > 0 || captures > 0 || confirmed > 0 {
                 tracing::info!(expired, captures, confirmed, "maintenance paiements/colis");
+            }
+        }
+    });
+}
+
+/// F6.2 — export PostHog (si POSTHOG_API_KEY) toutes les 10 minutes, et
+/// récap KPI hebdo à l'admin le lundi (idempotent via le journal d'audit).
+fn spawn_analytics_jobs(state: AppState) {
+    let api_key = std::env::var("POSTHOG_API_KEY")
+        .ok()
+        .filter(|k| !k.is_empty());
+    let host =
+        std::env::var("POSTHOG_HOST").unwrap_or_else(|_| "https://eu.i.posthog.com".to_string());
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(600)).await;
+            if let Some(api_key) = api_key.as_deref() {
+                match infra::analytics::export_to_posthog(&state.pool, api_key, &host).await {
+                    Ok(0) => {}
+                    Ok(count) => tracing::info!(count, "événements exportés vers PostHog"),
+                    Err(error) => tracing::error!(%error, "export PostHog en échec"),
+                }
+            }
+            // Lundi : récap KPI, une seule fois (marqueur dans l'audit).
+            let now = chrono::Utc::now();
+            if chrono::Datelike::weekday(&now) == chrono::Weekday::Mon {
+                let already: Result<Option<(i64,)>, _> = sqlx::query_as(
+                    "SELECT id FROM admin_audit WHERE action = 'kpi_hebdo' \
+                     AND created_at > now() - interval '3 days' LIMIT 1",
+                )
+                .fetch_optional(&state.pool)
+                .await;
+                if let Ok(None) = already {
+                    if let Ok(kpis) = infra::analytics::weekly_kpis(&state.pool).await {
+                        let resume = format!(
+                            "inscriptions       : {}\nobjets publiés     : {}\npropositions       : {}\ntrocs créés        : {}\ntrocs finalisés    : {}\n  dont avec soulte : {}\nlitiges ouverts    : {}",
+                            kpis.signups, kpis.items_published, kpis.proposals_sent,
+                            kpis.trades_created, kpis.trades_finalized,
+                            kpis.trades_with_cash, kpis.disputes_opened,
+                        );
+                        if let Err(error) = state
+                            .mailer
+                            .send_admin_kpis(&state.config.admin_email, &resume)
+                            .await
+                        {
+                            tracing::error!(%error, "récap KPI hebdo non parti");
+                        } else {
+                            let _ = infra::admin_repo::record_audit(
+                                &state.pool,
+                                "kpi_hebdo",
+                                "system",
+                                "hebdo",
+                                None,
+                            )
+                            .await;
+                        }
+                    }
+                }
             }
         }
     });

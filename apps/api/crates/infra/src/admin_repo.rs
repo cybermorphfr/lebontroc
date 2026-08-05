@@ -1,0 +1,279 @@
+//! Requêtes du back-office (F6.1) : recherche transverse, file des
+//! signalements, journal d'audit — et RGPD (F6.3) : export, anonymisation.
+
+use chrono::{DateTime, Utc};
+use sqlx::{FromRow, PgPool};
+use uuid::Uuid;
+
+// ————— Journal d'audit (immuable : INSERT only) —————
+
+pub async fn record_audit(
+    pool: &PgPool,
+    action: &str,
+    target_type: &str,
+    target_id: &str,
+    details: Option<&str>,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        "INSERT INTO admin_audit (action, target_type, target_id, details) \
+         VALUES ($1, $2, $3, $4)",
+    )
+    .bind(action)
+    .bind(target_type)
+    .bind(target_id)
+    .bind(details)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct AuditEntry {
+    pub id: i64,
+    pub action: String,
+    pub target_type: String,
+    pub target_id: String,
+    pub details: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+pub async fn list_audit(pool: &PgPool) -> sqlx::Result<Vec<AuditEntry>> {
+    sqlx::query_as::<_, AuditEntry>(
+        "SELECT id, action, target_type, target_id, details, created_at \
+         FROM admin_audit ORDER BY id DESC LIMIT 200",
+    )
+    .fetch_all(pool)
+    .await
+}
+
+// ————— File des signalements —————
+
+#[derive(Debug, Clone, FromRow)]
+pub struct ReportRow {
+    pub id: Uuid,
+    pub reporter_pseudo: String,
+    pub target_type: String,
+    pub target_id: Uuid,
+    pub reason: String,
+    pub comment: Option<String>,
+    pub status: String,
+    pub outcome: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+pub async fn list_reports(pool: &PgPool, status: Option<&str>) -> sqlx::Result<Vec<ReportRow>> {
+    sqlx::query_as::<_, ReportRow>(
+        "SELECT r.id, u.pseudo::text AS reporter_pseudo, r.target_type, r.target_id, \
+                r.reason, r.comment, r.status, r.outcome, r.created_at \
+         FROM reports r JOIN users u ON u.id = r.reporter_id \
+         WHERE ($1::text IS NULL OR r.status = $1) \
+         ORDER BY r.created_at DESC LIMIT 100",
+    )
+    .bind(status)
+    .fetch_all(pool)
+    .await
+}
+
+/// Clôt un signalement — retourne false s'il était déjà traité.
+pub async fn close_report(
+    pool: &PgPool,
+    id: Uuid,
+    outcome: &str,
+) -> sqlx::Result<Option<ReportRow>> {
+    sqlx::query_as::<_, ReportRow>(
+        "WITH closed AS ( \
+            UPDATE reports SET status = 'traite', outcome = $2, resolved_at = now() \
+            WHERE id = $1 AND status = 'nouveau' RETURNING * \
+         ) \
+         SELECT c.id, u.pseudo::text AS reporter_pseudo, c.target_type, c.target_id, \
+                c.reason, c.comment, c.status, c.outcome, c.created_at \
+         FROM closed c JOIN users u ON u.id = c.reporter_id",
+    )
+    .bind(id)
+    .bind(outcome)
+    .fetch_optional(pool)
+    .await
+}
+
+// ————— Recherche transverse —————
+
+#[derive(Debug, Clone, FromRow)]
+pub struct AdminUserHit {
+    pub id: Uuid,
+    pub pseudo: String,
+    pub email: String,
+    pub created_at: DateTime<Utc>,
+    pub restricted_until: Option<DateTime<Utc>>,
+    pub banned_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct AdminItemHit {
+    pub id: Uuid,
+    pub title: String,
+    pub status: String,
+    pub owner_pseudo: String,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct AdminTradeHit {
+    pub id: Uuid,
+    pub status: String,
+    pub delivery_mode: String,
+    pub proposer_pseudo: String,
+    pub recipient_pseudo: String,
+    pub created_at: DateTime<Utc>,
+}
+
+pub async fn search_users(pool: &PgPool, q: &str) -> sqlx::Result<Vec<AdminUserHit>> {
+    sqlx::query_as::<_, AdminUserHit>(
+        "SELECT id, pseudo::text AS pseudo, email::text AS email, created_at, \
+                restricted_until, banned_at \
+         FROM users WHERE pseudo::text ILIKE '%' || $1 || '%' \
+            OR email::text ILIKE '%' || $1 || '%' \
+         ORDER BY created_at DESC LIMIT 20",
+    )
+    .bind(q)
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn search_items(pool: &PgPool, q: &str) -> sqlx::Result<Vec<AdminItemHit>> {
+    sqlx::query_as::<_, AdminItemHit>(
+        "SELECT i.id, i.title, i.status, u.pseudo::text AS owner_pseudo \
+         FROM items i JOIN users u ON u.id = i.owner_id \
+         WHERE i.title ILIKE '%' || $1 || '%' AND i.deleted_at IS NULL \
+         ORDER BY i.created_at DESC LIMIT 20",
+    )
+    .bind(q)
+    .fetch_all(pool)
+    .await
+}
+
+/// Les trocs d'un utilisateur trouvé par pseudo (ou un troc par UUID exact).
+pub async fn search_trades(pool: &PgPool, q: &str) -> sqlx::Result<Vec<AdminTradeHit>> {
+    sqlx::query_as::<_, AdminTradeHit>(
+        "SELECT t.id, t.status, t.delivery_mode, \
+                p.pseudo::text AS proposer_pseudo, r.pseudo::text AS recipient_pseudo, \
+                t.created_at \
+         FROM trades t \
+         JOIN users p ON p.id = t.proposer_id \
+         JOIN users r ON r.id = t.recipient_id \
+         WHERE t.id::text = $1 \
+            OR p.pseudo::text ILIKE '%' || $1 || '%' \
+            OR r.pseudo::text ILIKE '%' || $1 || '%' \
+         ORDER BY t.created_at DESC LIMIT 20",
+    )
+    .bind(q)
+    .fetch_all(pool)
+    .await
+}
+
+/// Événement de score hors troc (signalement fondé) — trade_id NULL.
+pub async fn record_scoring_event(
+    pool: &PgPool,
+    culprit_id: Uuid,
+    event_type: &str,
+    details: &str,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        "INSERT INTO dispute_events (trade_id, event_type, culprit_id, details) \
+         VALUES (NULL, $1, $2, $3)",
+    )
+    .bind(event_type)
+    .bind(culprit_id)
+    .bind(details)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+// ————— RGPD (F6.3) —————
+
+/// Export brut de toutes les données d'un utilisateur (JSON agrégé en SQL).
+pub async fn export_user_data(pool: &PgPool, user_id: Uuid) -> sqlx::Result<serde_json::Value> {
+    let (data,): (serde_json::Value,) = sqlx::query_as(
+        "SELECT jsonb_build_object( \
+            'profil', (SELECT to_jsonb(u) - 'password_hash' FROM users u WHERE id = $1), \
+            'objets', (SELECT COALESCE(jsonb_agg(to_jsonb(i)), '[]'::jsonb) \
+                       FROM items i WHERE owner_id = $1), \
+            'propositions', (SELECT COALESCE(jsonb_agg(to_jsonb(p)), '[]'::jsonb) \
+                       FROM proposals p WHERE proposer_id = $1 OR recipient_id = $1), \
+            'trocs', (SELECT COALESCE(jsonb_agg(to_jsonb(t) - 'proposer_code' - 'recipient_code'), '[]'::jsonb) \
+                       FROM trades t WHERE proposer_id = $1 OR recipient_id = $1), \
+            'messages', (SELECT COALESCE(jsonb_agg(to_jsonb(m)), '[]'::jsonb) \
+                       FROM messages m WHERE sender_id = $1), \
+            'evaluations', (SELECT COALESCE(jsonb_agg(to_jsonb(r)), '[]'::jsonb) \
+                       FROM reviews r WHERE reviewer_id = $1 OR reviewee_id = $1), \
+            'paiements', (SELECT COALESCE(jsonb_agg(jsonb_build_object( \
+                            'trade_id', trade_id, 'amount_cents', amount_cents, \
+                            'status', status, 'created_at', created_at)), '[]'::jsonb) \
+                       FROM payments WHERE payer_id = $1), \
+            'favoris', (SELECT COALESCE(jsonb_agg(item_id), '[]'::jsonb) \
+                       FROM favorites WHERE user_id = $1), \
+            'notifications', (SELECT COALESCE(jsonb_agg(to_jsonb(n)), '[]'::jsonb) \
+                       FROM notifications n WHERE user_id = $1) \
+         )",
+    )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(data)
+}
+
+/// Suppression de compte (Gherkin F6.3) : profil anonymisé, objets
+/// disparus, sessions purgées — les trocs finalisés avec soulte restent en
+/// base sous forme anonymisée (obligations comptables). Refusée si des
+/// trocs sont encore actifs.
+pub async fn delete_account(pool: &PgPool, user_id: Uuid) -> sqlx::Result<bool> {
+    let mut tx = pool.begin().await?;
+    let (active,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM trades \
+         WHERE (proposer_id = $1 OR recipient_id = $1) \
+           AND status IN ('attente_paiement', 'accepte', 'litige_gele')",
+    )
+    .bind(user_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if active > 0 {
+        return Ok(false);
+    }
+    // Anonymisation : l'e-mail et le pseudo deviennent irréversibles, le
+    // compte est marqué supprimé et inutilisable.
+    sqlx::query(
+        "UPDATE users SET \
+            email = ('supprime-' || left(id::text, 8) || '@anonyme.lebontroc')::citext, \
+            pseudo = ('parti_' || left(id::text, 8))::citext, \
+            password_hash = 'compte-supprime', postal_code = '00000', \
+            email_verified_at = NULL, deleted_at = now(), banned_at = now() \
+         WHERE id = $1",
+    )
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("DELETE FROM sessions WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        "UPDATE items SET status = 'masque', deleted_at = now(), updated_at = now() \
+         WHERE owner_id = $1 AND deleted_at IS NULL",
+    )
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("DELETE FROM favorites WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM notifications WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM wishlist_entries WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(true)
+}

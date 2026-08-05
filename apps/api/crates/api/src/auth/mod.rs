@@ -28,6 +28,12 @@ pub fn router() -> Router<AppState> {
             get(handlers::list_sessions).delete(handlers::revoke_other_sessions),
         )
         .route("/auth/sessions/{id}", delete(handlers::revoke_session))
-        .route("/me", get(handlers::me).patch(handlers::update_me))
+        .route(
+            "/me",
+            get(handlers::me)
+                .patch(handlers::update_me)
+                .delete(handlers::delete_my_account),
+        )
+        .route("/me/export", get(handlers::export_my_data))
         .route("/analytics/track", post(handlers::track_event))
 }
