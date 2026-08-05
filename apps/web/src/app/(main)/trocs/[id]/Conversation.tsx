@@ -155,8 +155,11 @@ export function Conversation({
   }
 
   const groupes = grouper(messages, myPseudo);
-  const dernier = messages[messages.length - 1];
-  const vu = dernier?.sender_pseudo === myPseudo && dernier.read_at !== null;
+  // « Vu » se pose sous MON dernier message lu — il y reste même si
+  // l'autre partie a répondu depuis.
+  const dernierLuId = [...messages]
+    .reverse()
+    .find((m) => m.sender_pseudo === myPseudo && m.read_at !== null)?.id;
 
   return (
     <section
@@ -195,6 +198,7 @@ export function Conversation({
 
         {groupes.map((groupe) => {
           const premier = groupe.items[0];
+          const vu = groupe.items.some((m) => m.id === dernierLuId);
           return (
             <div key={premier.id} className="flex flex-col gap-1">
               <p className="text-center text-[11px] text-neutre-700">
@@ -244,11 +248,11 @@ export function Conversation({
                   ))}
                 </div>
               </div>
+              {vu ? <p className="text-right text-[11px] text-neutre-700">Vu</p> : null}
             </div>
           );
         })}
 
-        {vu ? <p className="text-right text-[11px] text-neutre-700">Vu</p> : null}
         <div ref={bottom} aria-hidden />
       </div>
 
