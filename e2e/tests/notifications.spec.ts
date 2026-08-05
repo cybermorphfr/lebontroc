@@ -79,7 +79,7 @@ test("cloche : badge, centre, clic vers le troc", async ({
   await page.getByRole("link", { name: "Proposer un troc" }).click();
   await page.getByRole("button", { name: `Choisir ${jeu}` }).click();
   await page.getByRole("button", { name: /Envoyer ma proposition/ }).click();
-  await expect(page.getByRole("heading", { name: "Conversation" })).toBeVisible();
+  await expect(page.getByPlaceholder("Envoyer un message")).toBeVisible();
 
   // Alice voit le badge s'allumer, ouvre le centre, clique la notification.
   await pageAlice.goto("/");
@@ -87,7 +87,7 @@ test("cloche : badge, centre, clic vers le troc", async ({
   await pageAlice.getByRole("link", { name: /Notifications/ }).click();
   await expect(pageAlice.getByText("Nouvelle proposition de troc !")).toBeVisible();
   await pageAlice.getByText("Nouvelle proposition de troc !").click();
-  await expect(pageAlice.getByRole("heading", { name: "Conversation" })).toBeVisible();
+  await expect(pageAlice.getByPlaceholder("Envoyer un message")).toBeVisible();
 
   // Retour : la notification est lue, le badge éteint.
   await pageAlice.goto("/notifications");

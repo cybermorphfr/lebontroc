@@ -82,7 +82,7 @@ test("temps réel, anti-contournement et non-lus", async ({
   await page.getByRole("link", { name: "Proposer un troc" }).click();
   await page.getByRole("button", { name: `Choisir ${jeu}` }).click();
   await page.getByRole("button", { name: /Envoyer ma proposition/ }).click();
-  await expect(page.getByRole("heading", { name: "Conversation" })).toBeVisible();
+  await expect(page.getByPlaceholder("Envoyer un message")).toBeVisible();
 
   // Anti-contournement : le numéro est masqué, avec un message pédagogique.
   await page.getByLabel("Ton message").fill("appelle-moi au 06 12 34 56 78");
@@ -98,7 +98,7 @@ test("temps réel, anti-contournement et non-lus", async ({
 
   // Temps réel : les deux dans la conversation, sans rechargement.
   await pageAlice.getByRole("link", { name: /appelle-moi/ }).click();
-  await expect(pageAlice.getByRole("heading", { name: "Conversation" })).toBeVisible();
+  await expect(pageAlice.getByPlaceholder("Envoyer un message")).toBeVisible();
 
   await pageAlice.getByLabel("Ton message").fill("Pas de téléphone, tout se passe ici !");
   await pageAlice.getByRole("button", { name: "Envoyer" }).click();
@@ -107,7 +107,7 @@ test("temps réel, anti-contournement et non-lus", async ({
     timeout: 10000,
   });
 
-  // Et l'accusé de lecture d'Alice arrive chez Bob (« Lu »).
-  await expect(page.getByText(/· Lu/).first()).toBeVisible({ timeout: 10000 });
+  // Et l'accusé de lecture d'Alice arrive chez Bob (« Vu »).
+  await expect(page.getByText("Vu", { exact: true })).toBeVisible({ timeout: 10000 });
   await contexteAlice.close();
 });

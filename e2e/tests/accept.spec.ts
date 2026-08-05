@@ -82,7 +82,7 @@ test("contre-proposition puis acceptation : troc conclu, objets réservés", asy
   await page.getByRole("link", { name: "Proposer un troc" }).click();
   await page.getByRole("button", { name: `Choisir ${jeu}` }).click();
   await page.getByRole("button", { name: /Envoyer ma proposition/ }).click();
-  await expect(page.getByRole("heading", { name: "Conversation" })).toBeVisible();
+  await expect(page.getByPlaceholder("Envoyer un message")).toBeVisible();
 
   // Alice contre-propose (sans soulte — pendant la bêta, seuls les trocs
   // sans soulte se concluent ; la garde est couverte par les tests SQL).

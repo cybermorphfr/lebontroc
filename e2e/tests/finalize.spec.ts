@@ -82,7 +82,7 @@ test("finalisation croisée : codes échangés, troc finalisé, objets troqués"
   await page.getByRole("link", { name: "Proposer un troc" }).click();
   await page.getByRole("button", { name: `Choisir ${jeu}` }).click();
   await page.getByRole("button", { name: /Envoyer ma proposition/ }).click();
-  await expect(page.getByRole("heading", { name: "Conversation" })).toBeVisible();
+  await expect(page.getByPlaceholder("Envoyer un message")).toBeVisible();
   const urlTroc = page.url();
 
   // Alice accepte en main propre (l'envoi croisé existe depuis F4.3).

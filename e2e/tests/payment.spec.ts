@@ -84,7 +84,7 @@ test("soulte séquestrée : refus simulé, préautorisation, capture à la remis
   await page.getByText("J'ajoute des euros", { exact: true }).click();
   await page.getByLabel("Montant de la soulte").fill("10");
   await page.getByRole("button", { name: /Envoyer ma proposition/ }).click();
-  await expect(page.getByRole("heading", { name: "Conversation" })).toBeVisible();
+  await expect(page.getByPlaceholder("Envoyer un message")).toBeVisible();
   const urlTroc = page.url();
 
   // Alice accepte en main propre : le troc attend le paiement de Bob.

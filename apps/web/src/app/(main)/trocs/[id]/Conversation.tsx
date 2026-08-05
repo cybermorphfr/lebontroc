@@ -159,15 +159,20 @@ export function Conversation({
   const vu = dernier?.sender_pseudo === myPseudo && dernier.read_at !== null;
 
   return (
-    <section className="flex flex-col overflow-hidden rounded-[28px] bg-sable shadow-sm">
+    <section
+      aria-label={`Conversation avec ${otherPseudo}`}
+      className="flex flex-col overflow-hidden rounded-[28px] bg-sable shadow-sm"
+    >
       <header className="flex items-center gap-3 border-b border-encre/10 px-4 py-3">
         <AvatarLetter pseudo={otherPseudo} size="sm" />
-        <Link
-          href={`/troqueur/${encodeURIComponent(otherPseudo)}`}
-          className="font-display text-base text-encre hover:underline"
-        >
-          {otherPseudo}
-        </Link>
+        <h2 className="font-display text-base">
+          <Link
+            href={`/troqueur/${encodeURIComponent(otherPseudo)}`}
+            className="text-encre hover:underline"
+          >
+            {otherPseudo}
+          </Link>
+        </h2>
         <Link
           href={`/troqueur/${encodeURIComponent(otherPseudo)}`}
           aria-label={`Voir le profil de ${otherPseudo}`}
