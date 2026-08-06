@@ -173,7 +173,9 @@ export function ProposalComposer({
                   onChange={(e) => setCashEuros(Number(e.target.value))}
                   className="flex-1 accent-[#c67139]"
                 />
-                <span className="w-16 text-right font-display text-lg">{cashEuros} €</span>
+                <span data-testid="montant-soulte" className="w-16 text-right font-display text-lg">
+                  {cashEuros} €
+                </span>
               </div>
               <p className="text-xs text-neutre-700">
                 Plafond : {plafondEuros} € — la soulte ne peut pas dépasser 50 % de la valeur du

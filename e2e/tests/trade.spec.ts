@@ -92,7 +92,7 @@ test("composer, plafond de soulte, vue et refus", async ({
   const curseur = page.getByLabel("Montant de la soulte");
   await expect(curseur).toHaveAttribute("max", "75");
   await curseur.fill("30");
-  await expect(page.getByText("30 €", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("montant-soulte")).toHaveText("30 €");
 
   // Envoi → détail « Envoyée » avec le récap.
   await page.getByRole("button", { name: /Envoyer ma proposition/ }).click();
