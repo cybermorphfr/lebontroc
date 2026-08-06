@@ -20,9 +20,9 @@ use crate::notification::handlers::{email_allowed, notify, notify_fans};
 use crate::telemetry;
 use crate::trade::dto::{
     AcceptProposalRequest, ConfigureShippingRequest, ConfirmTradeRequest, CreateProposalRequest,
-    PayTradeRequest, PaymentInfo, ProposalItemResponse, ProposalResponse, RelayResponse,
-    ProposalChainEntry, ReviewInfo, ReviewReplyRequest, ShipmentInfo, SubmitReviewRequest, TradeDetailResponse,
-    TradeResponse, TradeReviews,
+    PayTradeRequest, PaymentInfo, ProposalChainEntry, ProposalItemResponse, ProposalResponse,
+    RelayResponse, ReviewInfo, ReviewReplyRequest, ShipmentInfo, SubmitReviewRequest,
+    TradeDetailResponse, TradeResponse, TradeReviews,
 };
 use crate::AppState;
 
