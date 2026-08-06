@@ -111,12 +111,18 @@ pub async fn list_proposals(
 }
 
 /// Toutes les propositions où l'utilisateur est partie prenante.
+/// Les conversations de l'utilisateur. Une proposition remplacée par une
+/// contre-proposition est exclue : son fil a déménagé vers la nouvelle
+/// (`UPDATE messages SET proposal_id`), donc l'afficher créerait une
+/// seconde conversation vide pour le MÊME échange. L'historique reste
+/// accessible depuis la nouvelle (« voir la proposition précédente »).
 pub async fn list_user_proposals(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Vec<Proposal>> {
     sqlx::query_as::<_, Proposal>(&format!(
         "SELECT {PROPOSAL_COLUMNS} FROM proposals p \
          JOIN users up ON up.id = p.proposer_id \
          JOIN users ur ON ur.id = p.recipient_id \
-         WHERE p.proposer_id = $1 OR p.recipient_id = $1 \
+         WHERE (p.proposer_id = $1 OR p.recipient_id = $1) \
+           AND p.status <> 'contre_proposee' \
          ORDER BY p.created_at DESC LIMIT 100"
     ))
     .bind(user_id)

@@ -387,6 +387,11 @@ pub async fn refuse_proposal(
         json!({"proposal_id": id}),
     )
     .await;
+    broadcast_event(
+        &state,
+        [proposal.proposer_id, proposal.recipient_id],
+        json!({"type": "trade_updated", "proposal_id": id}),
+    );
     // F5.3 — le proposant apprend le refus (in-app + e-mail selon prefs).
     if let (Ok(Some(me)), Ok(Some(proposer))) = (
         infra::auth_repo::find_user_by_id(&state.pool, user.user_id).await,
@@ -874,6 +879,16 @@ pub async fn counter_proposal(
         }),
     )
     .await;
+
+    broadcast_event(
+        &state,
+        [old.proposer_id, old.recipient_id],
+        json!({
+            "type": "trade_updated",
+            "proposal_id": id,
+            "new_proposal_id": new_id,
+        }),
+    );
 
     // F5.3 — l'autre partie découvre la contre-proposition.
     if let (Ok(Some(me)), Ok(Some(recipient))) = (

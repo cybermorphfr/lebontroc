@@ -15,6 +15,7 @@ import { PaymentPanel } from "./PaymentPanel";
 import { ReviewPanel } from "./ReviewPanel";
 import { ShippingPanel } from "./ShippingPanel";
 import { Conversation } from "./Conversation";
+import { RealtimeRefresher } from "./RealtimeRefresher";
 import { RefuseButton } from "./RefuseButton";
 
 export const metadata: Metadata = {
@@ -77,6 +78,7 @@ export default async function TrocDetailPage({
 
   return (
     <main className="mx-auto w-full max-w-2xl px-6 pb-16">
+      <RealtimeRefresher proposalId={proposal.id} tradeId={proposal.trade?.id ?? null} />
       <div className="mb-4 flex items-center justify-between gap-3">
         <h1 className="font-display text-2xl">
           {proposal.is_proposer

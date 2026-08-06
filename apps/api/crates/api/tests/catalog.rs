@@ -1829,6 +1829,24 @@ async fn contre_proposition_remplace_et_garde_la_conversation(pool: PgPool) {
     .await;
     assert_eq!(json["status"], "contre_proposee");
     assert_eq!(json["superseded_by"], new_id.as_str());
+
+    // Une contre-proposition ne dédouble pas la conversation : la liste
+    // ne montre que le fil vivant (celui qui porte les messages).
+    for who in [&alice, &bob] {
+        let conversations =
+            body_json(call(&app, request("GET", "/me/conversations", None, Some(who))).await).await;
+        let ids: Vec<&str> = conversations
+            .as_array()
+            .expect("liste")
+            .iter()
+            .filter_map(|c| c["proposal"]["id"].as_str())
+            .collect();
+        assert_eq!(
+            ids,
+            vec![new_id.as_str()],
+            "une seule conversation par échange"
+        );
+    }
     // Alice (destinataire de l'ancienne) ne peut plus l'accepter non plus.
     let response = call(
         &app,
