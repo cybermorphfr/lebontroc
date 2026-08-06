@@ -101,6 +101,13 @@ async fn notify_dispute_opened(state: &AppState, trade_id: Uuid, opener_id: Uuid
         {
             tracing::error!(%error, "alerte admin dossier non partie");
         }
+        crate::admin::handlers::notify_admins(
+            state,
+            "⚖️ Nouveau dossier de litige".to_string(),
+            format!("{} a ouvert un dossier ({reason}).", opener.pseudo),
+            "/admin/litiges".to_string(),
+        )
+        .await;
     }
 }
 
@@ -407,6 +414,13 @@ pub async fn create_report(
     {
         tracing::error!(%error, "alerte admin signalement non partie");
     }
+    crate::admin::handlers::notify_admins(
+        &state,
+        "🚩 Nouveau signalement".to_string(),
+        format!("{} · {}", body.target_type, body.reason),
+        "/admin/signalements".to_string(),
+    )
+    .await;
     Ok(StatusCode::CREATED)
 }
 
@@ -596,6 +610,13 @@ pub async fn apply_score_sanctions(state: &AppState, user_id: Uuid) -> regles::S
         {
             tracing::error!(%error, "alerte admin sanction non partie");
         }
+        crate::admin::handlers::notify_admins(
+            state,
+            "🚨 Sanction automatique".to_string(),
+            admin_text.clone(),
+            "/admin".to_string(),
+        )
+        .await;
     }
     sanction
 }

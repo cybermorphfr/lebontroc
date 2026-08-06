@@ -462,3 +462,26 @@ pub(crate) fn map_admin_error(error: domain::admin::AdminError) -> ApiError {
         ),
     }
 }
+
+/// Notifie l'équipe d'administration dans l'application (en plus de
+/// l'e-mail ADMIN_EMAIL) : nouveau litige, signalement, seuil de sanction.
+pub async fn notify_admins(state: &AppState, titre: String, corps: String, lien: String) {
+    let equipe = match infra::admin_repo::list_staff(&state.pool).await {
+        Ok(equipe) => equipe,
+        Err(error) => {
+            tracing::error!(%error, "équipe d'administration introuvable");
+            return;
+        }
+    };
+    for membre in equipe {
+        crate::notification::handlers::notify(
+            state,
+            membre.id,
+            "litige",
+            titre.clone(),
+            corps.clone(),
+            lien.clone(),
+        )
+        .await;
+    }
+}

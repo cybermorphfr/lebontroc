@@ -28,15 +28,12 @@ export default async function AdminSignalementsPage() {
   const reports: Report[] = (await adminFetch<Report[]>(`/admin/reports`)) ?? [];
 
   return (
-    <main className="mx-auto flex w-full max-w-3xl flex-col gap-3 p-6 font-mono text-sm">
-      <h1 className="text-xl font-bold">
+    <main className="flex flex-col gap-3 text-sm">
+      <h1 className="font-display text-2xl">
         Signalements ({reports.filter((r) => r.status === "nouveau").length} nouveaux)
       </h1>
-      <a href="/admin" className="text-xs underline">
-        ← Admin
-      </a>
       {reports.map((r) => (
-        <div key={r.id} className="rounded border p-3">
+        <div key={r.id} className="flex flex-col gap-1 rounded-[28px] bg-sable p-5 shadow-sm">
           <p>
             [{r.status}
             {r.outcome ? ` → ${r.outcome}` : ""}] {r.target_type} · {r.reason} · par{" "}
@@ -49,14 +46,14 @@ export default async function AdminSignalementsPage() {
               <form action={closeReport}>
                 <input type="hidden" name="id" value={r.id} />
                 <input type="hidden" name="outcome" value="fonde" />
-                <button type="submit" className="border bg-black px-3 py-1 text-white">
+                <button type="submit" className="cursor-pointer rounded-full bg-[#c67139] px-4 py-1.5 font-display text-xs text-creme hover:bg-terracotta-600">
                   Fondé (+2 au score)
                 </button>
               </form>
               <form action={closeReport}>
                 <input type="hidden" name="id" value={r.id} />
                 <input type="hidden" name="outcome" value="rejete" />
-                <button type="submit" className="border px-3 py-1">
+                <button type="submit" className="cursor-pointer rounded-full border border-neutre-300 px-4 py-1.5 text-xs hover:bg-encre/7">
                   Rejeter
                 </button>
               </form>

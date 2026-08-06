@@ -113,6 +113,20 @@ impl FromRequestParts<AppState> for AdminActor {
         if !domain::admin::peut_administrer(&info.role) {
             return Err(refus());
         }
+        // 2FA active → la session doit avoir vérifié le second facteur.
+        let totp = infra::admin_repo::totp_state(&state.pool, user.user_id)
+            .await
+            .map_err(ApiError::from)?;
+        if totp.totp_enabled_at.is_some()
+            && !infra::admin_repo::session_totp_verified(&state.pool, user.session_id)
+                .await
+                .map_err(ApiError::from)?
+        {
+            return Err(ApiError::forbidden(
+                "totp_requis",
+                "Vérifie ton code de double authentification pour cette session.",
+            ));
+        }
         Ok(AdminActor {
             user_id: Some(user.user_id),
             role: info.role,

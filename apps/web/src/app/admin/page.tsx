@@ -1,8 +1,9 @@
-import { adminFetch, adminPost } from "./adminFetch";
+import Link from "next/link";
+
+import { adminFetch } from "./adminFetch";
+import { Carte, Pastille, Statistique, champ } from "./ui";
+
 export const dynamic = "force-dynamic";
-
-// Hub d'administration (F6.1) — brut, derrière basic auth Traefik + token.
-
 
 type Kpis = {
   signups: number;
@@ -47,74 +48,107 @@ export default async function AdminHub({
   ]);
 
   return (
-    <main className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-6 font-mono text-sm">
-      <h1 className="text-xl font-bold">Admin Lebontroc</h1>
-      <nav className="flex gap-3 text-xs underline">
-        <a href="/admin/litiges">Litiges</a>
-        <a href="/admin/signalements">Signalements</a>
-        <a href="/admin/audit">Audit</a>
-        <a href="/admin/equipe">Équipe</a>
-        <a href="/admin/liens">Mailpit</a>
-      </nav>
-
+    <div className="flex flex-col gap-4">
       {kpis ? (
-        <section className="rounded border p-3">
-          <h2 className="font-bold">7 derniers jours</h2>
-          <p>
-            {kpis.signups} inscriptions · {kpis.items_published} objets · {kpis.proposals_sent}{" "}
-            propositions · {kpis.trades_created} trocs créés · {kpis.trades_finalized} finalisés
-            (dont {kpis.trades_with_cash} avec soulte) · {kpis.disputes_opened} litiges
+        <Carte titre="Les 7 derniers jours">
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-7">
+            <Statistique valeur={kpis.signups} libelle="inscriptions" />
+            <Statistique valeur={kpis.items_published} libelle="objets publiés" />
+            <Statistique valeur={kpis.proposals_sent} libelle="propositions" />
+            <Statistique valeur={kpis.trades_created} libelle="trocs créés" />
+            <Statistique valeur={kpis.trades_finalized} libelle="finalisés" />
+            <Statistique valeur={kpis.trades_with_cash} libelle="avec soulte" />
+            <Statistique valeur={kpis.disputes_opened} libelle="litiges" />
+          </div>
+        </Carte>
+      ) : (
+        <Carte>
+          <p className="text-sm text-neutre-700">
+            Les indicateurs et la recherche sont réservés aux super-administrateurs — ou ta
+            session doit revérifier sa double authentification (reconnecte-toi).
           </p>
-        </section>
-      ) : null}
+        </Carte>
+      )}
 
-      <form action="/admin" method="get" className="flex gap-2">
-        <input
-          name="q"
-          defaultValue={q ?? ""}
-          placeholder="pseudo, e-mail, titre ou UUID de troc"
-          className="flex-1 border px-2 py-1"
-        />
-        <button type="submit" className="border bg-black px-3 py-1 text-white">
-          Chercher
-        </button>
-      </form>
+      <Carte titre="Rechercher">
+        <form action="/admin" method="get" className="flex gap-2">
+          <input
+            name="q"
+            defaultValue={q ?? ""}
+            placeholder="Pseudo, e-mail, titre d'objet ou identifiant de troc…"
+            className={`flex-1 ${champ}`}
+          />
+          <button
+            type="submit"
+            className="flex min-h-10 cursor-pointer items-center rounded-full bg-[#c67139] px-5 font-display text-sm text-creme hover:bg-terracotta-600"
+          >
+            Chercher
+          </button>
+        </form>
 
-      {results ? (
-        <section className="flex flex-col gap-3">
-          <div>
-            <h2 className="font-bold">Utilisateurs ({results.users.length})</h2>
-            {results.users.map((u) => (
-              <p key={u.id}>
-                {u.pseudo} · {u.email} · {u.role}
-                {u.is_master ? " 🔒" : ""} · score {u.score}
-                {u.banned_at ? " · ⛔ BANNI" : u.restricted_until ? " · ⚠️ restreint" : ""} ·{" "}
-                {u.id}
-              </p>
-            ))}
+        {results ? (
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1.5">
+              <h3 className="text-sm font-bold">Utilisateurs ({results.users.length})</h3>
+              {results.users.map((u) => (
+                <div
+                  key={u.id}
+                  className="flex flex-wrap items-center gap-2 rounded-2xl bg-creme px-3 py-2 text-sm"
+                >
+                  <Link href={`/troqueur/${u.pseudo}`} className="font-semibold hover:underline">
+                    {u.pseudo}
+                  </Link>
+                  <span className="text-neutre-700">{u.email}</span>
+                  {u.role !== "utilisateur" ? <Pastille ton="ok">{u.role}</Pastille> : null}
+                  {u.is_master ? <Pastille ton="ok">🔒 maître</Pastille> : null}
+                  <Pastille ton={u.score >= 5 ? "alerte" : "neutre"}>score {u.score}</Pastille>
+                  {u.banned_at ? <Pastille ton="alerte">banni</Pastille> : null}
+                  {u.restricted_until ? <Pastille ton="attente">restreint</Pastille> : null}
+                </div>
+              ))}
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <h3 className="text-sm font-bold">Objets ({results.items.length})</h3>
+              {results.items.map((i) => (
+                <div
+                  key={i.id}
+                  className="flex flex-wrap items-center gap-2 rounded-2xl bg-creme px-3 py-2 text-sm"
+                >
+                  <Link href={`/objet/${i.id}`} className="font-semibold hover:underline">
+                    {i.title}
+                  </Link>
+                  <Pastille ton="neutre">{i.status}</Pastille>
+                  <span className="text-neutre-700">@{i.owner_pseudo}</span>
+                </div>
+              ))}
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <h3 className="text-sm font-bold">Trocs ({results.trades.length})</h3>
+              {results.trades.map((t) => (
+                <div
+                  key={t.id}
+                  className="flex flex-wrap items-center gap-2 rounded-2xl bg-creme px-3 py-2 text-sm"
+                >
+                  <span className="font-semibold">
+                    {t.proposer_pseudo} ↔ {t.recipient_pseudo}
+                  </span>
+                  <Pastille ton="neutre">{t.status}</Pastille>
+                  <span className="text-neutre-700">{t.delivery_mode}</span>
+                  <span className="truncate text-[11px] text-neutre-700">{t.id}</span>
+                </div>
+              ))}
+            </div>
           </div>
-          <div>
-            <h2 className="font-bold">Objets ({results.items.length})</h2>
-            {results.items.map((i) => (
-              <p key={i.id}>
-                {i.title} · {i.status} · @{i.owner_pseudo} ·{" "}
-                <a href={`/objet/${i.id}`} className="underline">
-                  voir
-                </a>
-              </p>
-            ))}
-          </div>
-          <div>
-            <h2 className="font-bold">Trocs ({results.trades.length})</h2>
-            {results.trades.map((t) => (
-              <p key={t.id}>
-                [{t.status}] {t.proposer_pseudo} ↔ {t.recipient_pseudo} · {t.delivery_mode} ·{" "}
-                {t.id}
-              </p>
-            ))}
-          </div>
-        </section>
-      ) : null}
-    </main>
+        ) : null}
+      </Carte>
+
+      <p className="text-xs text-neutre-700">
+        Les e-mails de la bêta restent consultables sur{" "}
+        <a href="/admin/liens" className="underline">
+          la boîte Mailpit
+        </a>
+        .
+      </p>
+    </div>
   );
 }

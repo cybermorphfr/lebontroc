@@ -378,6 +378,51 @@
         }
       }
     },
+    "/admin/users/{pseudo}/reset-2fa": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Récupération : réinitialiser la 2FA d'un compte verrouillé. Réservé au\ncompte maître (ou à la clé de service) — spec admin §4.3.",
+        "operationId": "admin_reset_totp",
+        "parameters": [
+          {
+            "name": "pseudo",
+            "in": "path",
+            "description": "Pseudo du compte à débloquer",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "2FA réinitialisée"
+          },
+          "403": {
+            "description": "Réservé au compte maître",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Inconnu",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/users/{pseudo}/role": {
       "post": {
         "tags": [
@@ -692,6 +737,40 @@
           },
           "409": {
             "description": "E-mail ou pseudo déjà pris",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/totp/verify": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Vérifier le second facteur pour la session courante (après connexion) :\ncode TOTP, ou code de secours (consommé).",
+        "operationId": "totp_verify",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TotpCodeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Session élevée"
+          },
+          "400": {
+            "description": "Code incorrect",
             "content": {
               "application/json": {
                 "schema": {
@@ -1595,6 +1674,123 @@
                   "items": {
                     "$ref": "#/components/schemas/ProposalResponse"
                   }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me/totp": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Où en est ma double authentification.",
+        "operationId": "totp_status",
+        "responses": {
+          "200": {
+            "description": "État 2FA",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TotpStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me/totp/disable": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Désactiver sa propre 2FA (code exigé — pas de désactivation volée).",
+        "operationId": "totp_disable",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TotpCodeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "2FA désactivée"
+          },
+          "400": {
+            "description": "Code incorrect",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me/totp/enable": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Confirmer l'enrôlement avec un premier code : la 2FA devient active,\nles codes de secours sont générés (montrés une seule fois), la session\ncourante est élevée.",
+        "operationId": "totp_enable",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TotpCodeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "2FA active",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TotpEnableResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Code incorrect ou enrôlement non démarré",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me/totp/start": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Démarrer l'enrôlement : un nouveau secret, à confirmer avec un premier\ncode avant que la 2FA ne soit active.",
+        "operationId": "totp_start",
+        "responses": {
+          "200": {
+            "description": "Secret à scanner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TotpStartResponse"
                 }
               }
             }
@@ -5366,6 +5562,83 @@
             "type": "integer",
             "format": "int32",
             "description": "Note de 1 à 5."
+          }
+        }
+      },
+      "TotpCodeRequest": {
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Code à 6 chiffres de l'application — ou code de secours XXXX-XXXX."
+          }
+        }
+      },
+      "TotpEnableResponse": {
+        "type": "object",
+        "required": [
+          "recovery_codes"
+        ],
+        "properties": {
+          "recovery_codes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Codes de secours à usage unique — affichés UNE SEULE fois."
+          }
+        }
+      },
+      "TotpStartResponse": {
+        "type": "object",
+        "required": [
+          "secret",
+          "otpauth_url",
+          "qr_svg"
+        ],
+        "properties": {
+          "otpauth_url": {
+            "type": "string",
+            "description": "URI otpauth:// (lien direct vers l'application)."
+          },
+          "qr_svg": {
+            "type": "string",
+            "description": "Le QR code, en SVG prêt à afficher."
+          },
+          "secret": {
+            "type": "string",
+            "description": "Secret Base32, à saisir manuellement si le QR ne passe pas."
+          }
+        }
+      },
+      "TotpStatusResponse": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "pending",
+          "session_verified",
+          "recovery_left"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "La 2FA est active sur ce compte."
+          },
+          "pending": {
+            "type": "boolean",
+            "description": "Un secret attend sa confirmation."
+          },
+          "recovery_left": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Codes de secours restants."
+          },
+          "session_verified": {
+            "type": "boolean",
+            "description": "La session courante a vérifié le second facteur."
           }
         }
       },

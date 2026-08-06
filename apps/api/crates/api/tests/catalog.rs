@@ -4571,3 +4571,160 @@ async fn roles_admin_hierarchie_compte_maitre_et_audit(pool: PgPool) {
     let response = call(&app, admin_request("GET", "/admin/kpis", None)).await;
     assert_eq!(response.status(), StatusCode::OK);
 }
+
+// ————— Double authentification (spec admin §4.3) —————
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn totp_enrolement_session_elevee_et_recuperation(pool: PgPool) {
+    let (app, emails) = app(pool.clone());
+    let patron = verified_user_at(&app, &emails, "t1@exemple.fr", "tpatron", "44300").await;
+    sqlx::query("UPDATE users SET role = 'super_admin' WHERE pseudo = 'tpatron'")
+        .execute(&pool)
+        .await
+        .expect("promotion");
+
+    // Sans 2FA : l'accès admin passe (période d'adoption).
+    assert_eq!(
+        call(&app, request("GET", "/admin/reports", None, Some(&patron)))
+            .await
+            .status(),
+        StatusCode::OK
+    );
+
+    // Enrôlement : secret + QR, puis confirmation avec un code calculé.
+    let depart =
+        body_json(call(&app, request("POST", "/me/totp/start", None, Some(&patron))).await).await;
+    let secret = depart["secret"].as_str().expect("secret").to_string();
+    assert!(depart["qr_svg"].as_str().expect("svg").starts_with("<?xml"));
+    let code = |s: &str| {
+        totp_rs::TOTP::new(
+            totp_rs::Algorithm::SHA1,
+            6,
+            1,
+            30,
+            totp_rs::Secret::Encoded(s.to_string())
+                .to_bytes()
+                .expect("secret"),
+            Some("Lebontroc".to_string()),
+            "tpatron".to_string(),
+        )
+        .expect("totp")
+        .generate_current()
+        .expect("code")
+    };
+    // Mauvais code → refus ; bon code → 2FA active + 10 codes de secours.
+    let response = call(
+        &app,
+        request(
+            "POST",
+            "/me/totp/enable",
+            Some(serde_json::json!({"code": "000000"})),
+            Some(&patron),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let response = call(
+        &app,
+        request(
+            "POST",
+            "/me/totp/enable",
+            Some(serde_json::json!({"code": code(&secret)})),
+            Some(&patron),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let secours: Vec<String> = body_json(response).await["recovery_codes"]
+        .as_array()
+        .expect("codes")
+        .iter()
+        .map(|c| c.as_str().expect("code").to_string())
+        .collect();
+    assert_eq!(secours.len(), 10);
+
+    // La session courante est élevée : l'admin reste accessible.
+    assert_eq!(
+        call(&app, request("GET", "/admin/reports", None, Some(&patron)))
+            .await
+            .status(),
+        StatusCode::OK
+    );
+
+    // Une NOUVELLE session (reconnexion) n'est pas élevée : 403 totp_requis…
+    let reconnexion = call(
+        &app,
+        request(
+            "POST",
+            "/auth/login",
+            Some(serde_json::json!({"email": "t1@exemple.fr", "password": "un-bon-mot-de-passe"})),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(reconnexion.status(), StatusCode::OK);
+    let cookies2 = cookie_header(&reconnexion);
+    let response = call(
+        &app,
+        request("GET", "/admin/reports", None, Some(&cookies2)),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(body_json(response).await["error"]["code"], "totp_requis");
+
+    // …jusqu'à la vérification — ici par code de secours (usage unique).
+    let response = call(
+        &app,
+        request(
+            "POST",
+            "/auth/totp/verify",
+            Some(serde_json::json!({"code": secours[0]})),
+            Some(&cookies2),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        call(
+            &app,
+            request("GET", "/admin/reports", None, Some(&cookies2))
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    // Le même code de secours ne sert pas deux fois.
+    let rejoue = call(
+        &app,
+        request(
+            "POST",
+            "/auth/totp/verify",
+            Some(serde_json::json!({"code": secours[0]})),
+            Some(&patron),
+        ),
+    )
+    .await;
+    assert_eq!(rejoue.status(), StatusCode::BAD_REQUEST);
+
+    // Récupération : réservée au compte maître (un super-admin ordinaire
+    // est refusé), la clé de service passe.
+    let autre = verified_user(&app, &emails, "t2@exemple.fr", "tautre").await;
+    sqlx::query("UPDATE users SET role = 'super_admin' WHERE pseudo = 'tautre'")
+        .execute(&pool)
+        .await
+        .expect("promotion");
+    let response = call(
+        &app,
+        request("POST", "/admin/users/tpatron/reset-2fa", None, Some(&autre)),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let response = call(
+        &app,
+        admin_request("POST", "/admin/users/tpatron/reset-2fa", None),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let statut = body_json(call(&app, request("GET", "/me/totp", None, Some(&patron))).await).await;
+    assert_eq!(statut["enabled"], false);
+}

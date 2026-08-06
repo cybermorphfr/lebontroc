@@ -62,19 +62,19 @@ export default async function AdminLitigesPage() {
   ).filter((d): d is Detail => d !== null);
 
   return (
-    <main className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-6 font-mono text-sm">
-      <h1 className="text-xl font-bold">Litiges ({details.length})</h1>
+    <main className="flex flex-col gap-4 text-sm">
+      <h1 className="font-display text-2xl">Litiges ({details.length})</h1>
 
-      <form action={liftSanctions} className="flex items-center gap-2 rounded border p-3">
-        <input name="pseudo" placeholder="pseudo" className="border px-2 py-1" />
-        <button type="submit" className="border px-3 py-1 hover:bg-black/5">
+      <form action={liftSanctions} className="flex flex-wrap items-center gap-2 rounded-[28px] bg-sable p-4 shadow-sm">
+        <input name="pseudo" placeholder="pseudo" className="rounded-full border border-neutre-300 bg-creme px-3.5 py-2 text-sm outline-none focus:border-terracotta-500" />
+        <button type="submit" className="cursor-pointer rounded-full border border-neutre-300 px-4 py-2 text-sm hover:bg-encre/7">
           Lever les sanctions
         </button>
       </form>
 
       {details.map((d) => (
-        <details key={d.id} className="rounded border p-3" open={d.status !== "tranche"}>
-          <summary className="cursor-pointer">
+        <details key={d.id} className="rounded-[28px] bg-sable p-5 shadow-sm" open={d.status !== "tranche"}>
+          <summary className="cursor-pointer font-display text-base">
             [{d.status}] {d.reason} — {d.proposer_pseudo} ↔ {d.recipient_pseudo} ·{" "}
             {new Date(d.opened_at).toLocaleDateString("fr-FR")}
             {d.outcome ? ` → ${d.outcome}` : ""}
@@ -108,16 +108,16 @@ export default async function AdminLitigesPage() {
                     <img
                       src={photo.url}
                       alt={`pièce de ${photo.uploader_pseudo}`}
-                      className="h-24 w-24 border object-cover"
+                      className="h-24 w-24 rounded-2xl object-cover"
                     />
                   </a>
                 ))}
               </div>
             ) : null}
             {d.status !== "tranche" ? (
-              <form action={resolveDispute} className="flex flex-wrap items-center gap-2 border-t pt-2">
+              <form action={resolveDispute} className="flex flex-wrap items-center gap-2 border-t border-encre/10 pt-3">
                 <input type="hidden" name="id" value={d.id} />
-                <select name="outcome" className="border px-2 py-1" required>
+                <select name="outcome" className="rounded-full border border-neutre-300 bg-creme px-3 py-2 text-sm outline-none" required>
                   <option value="capture">capture (troc validé, débits)</option>
                   <option value="liberation">libération (annulation, zéro débit)</option>
                   <option value="rejet">rejet (classé sans suite)</option>
@@ -125,10 +125,10 @@ export default async function AdminLitigesPage() {
                 <input
                   name="penalized"
                   placeholder="pseudo en tort (option)"
-                  className="border px-2 py-1"
+                  className="rounded-full border border-neutre-300 bg-creme px-3.5 py-2 text-sm outline-none"
                 />
-                <input name="note" placeholder="note interne" className="border px-2 py-1" />
-                <button type="submit" className="border bg-black px-3 py-1 text-white">
+                <input name="note" placeholder="note interne" className="rounded-full border border-neutre-300 bg-creme px-3.5 py-2 text-sm outline-none" />
+                <button type="submit" className="cursor-pointer rounded-full bg-[#c67139] px-5 py-2 font-display text-sm text-creme hover:bg-terracotta-600">
                   Trancher
                 </button>
               </form>

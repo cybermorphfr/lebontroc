@@ -355,3 +355,122 @@ pub async fn ensure_master(pool: &PgPool, email: &str) -> sqlx::Result<bool> {
     .await?;
     Ok(updated.rows_affected() > 0)
 }
+
+// ————— Double authentification (TOTP) —————
+
+/// L'état 2FA d'un compte.
+#[derive(Debug, Clone, FromRow)]
+pub struct TotpState {
+    pub totp_secret: Option<String>,
+    pub totp_enabled_at: Option<DateTime<Utc>>,
+}
+
+pub async fn totp_state(pool: &PgPool, user_id: Uuid) -> sqlx::Result<TotpState> {
+    sqlx::query_as::<_, TotpState>("SELECT totp_secret, totp_enabled_at FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_one(pool)
+        .await
+}
+
+/// Pose un secret en attente de confirmation (2FA pas encore active).
+pub async fn totp_start(pool: &PgPool, user_id: Uuid, secret: &str) -> sqlx::Result<()> {
+    sqlx::query("UPDATE users SET totp_secret = $2, totp_enabled_at = NULL WHERE id = $1")
+        .bind(user_id)
+        .bind(secret)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Active la 2FA (premier code vérifié) et enregistre les codes de secours
+/// hachés — atomique. La session courante est élevée dans la foulée.
+pub async fn totp_enable(
+    pool: &PgPool,
+    user_id: Uuid,
+    session_id: Uuid,
+    recovery_hashes: &[String],
+) -> sqlx::Result<()> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("UPDATE users SET totp_enabled_at = now() WHERE id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM totp_recovery_codes WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    for hash in recovery_hashes {
+        sqlx::query("INSERT INTO totp_recovery_codes (user_id, code_hash) VALUES ($1, $2)")
+            .bind(user_id)
+            .bind(hash)
+            .execute(&mut *tx)
+            .await?;
+    }
+    sqlx::query("UPDATE sessions SET totp_verified_at = now() WHERE id = $1")
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Élève une session : le second facteur vient d'être vérifié.
+pub async fn mark_session_totp_verified(pool: &PgPool, session_id: Uuid) -> sqlx::Result<()> {
+    sqlx::query("UPDATE sessions SET totp_verified_at = now() WHERE id = $1")
+        .bind(session_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn session_totp_verified(pool: &PgPool, session_id: Uuid) -> sqlx::Result<bool> {
+    let verified: Option<(Option<DateTime<Utc>>,)> =
+        sqlx::query_as("SELECT totp_verified_at FROM sessions WHERE id = $1")
+            .bind(session_id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(verified.and_then(|(v,)| v).is_some())
+}
+
+/// Consomme un code de secours (marqué utilisé s'il correspond).
+pub async fn consume_recovery_code(
+    pool: &PgPool,
+    user_id: Uuid,
+    code_hash: &str,
+) -> sqlx::Result<bool> {
+    let updated = sqlx::query(
+        "UPDATE totp_recovery_codes SET used_at = now() \
+         WHERE user_id = $1 AND code_hash = $2 AND used_at IS NULL",
+    )
+    .bind(user_id)
+    .bind(code_hash)
+    .execute(pool)
+    .await?;
+    Ok(updated.rows_affected() > 0)
+}
+
+pub async fn recovery_codes_left(pool: &PgPool, user_id: Uuid) -> sqlx::Result<i64> {
+    let (count,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM totp_recovery_codes WHERE user_id = $1 AND used_at IS NULL",
+    )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(count)
+}
+
+/// Récupération (compte maître uniquement) : désactive entièrement la 2FA
+/// de la cible, qui pourra la réactiver après reconnexion.
+pub async fn totp_reset(pool: &PgPool, user_id: Uuid) -> sqlx::Result<()> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("UPDATE users SET totp_secret = NULL, totp_enabled_at = NULL WHERE id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM totp_recovery_codes WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
