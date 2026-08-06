@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 
 import { euros, timeAgo } from "@/lib/format";
 
-import { adminFetch } from "../../adminFetch";
+import { adminFetch, adminFetchStatus } from "../../adminFetch";
 import { Carte, Pastille, Statistique } from "../../ui";
 
 export const dynamic = "force-dynamic";
@@ -116,11 +116,24 @@ export default async function AdminMembrePage({
   params: Promise<{ pseudo: string }>;
 }) {
   const { pseudo } = await params;
-  const [activite, conversations] = await Promise.all([
-    adminFetch<Activite>(`/admin/users/${encodeURIComponent(pseudo)}/activite`),
+  const [dossier, conversations] = await Promise.all([
+    adminFetchStatus<Activite>(`/admin/users/${encodeURIComponent(pseudo)}/activite`),
     adminFetch<Conversation[]>(`/admin/users/${encodeURIComponent(pseudo)}/conversations`),
   ]);
-  if (!activite) notFound();
+  // Un membre inconnu est un 404 ; une session expirée ou un rôle
+  // insuffisant méritent une phrase, pas une page d'erreur.
+  if (dossier.status === 404) notFound();
+  const activite = dossier.data;
+  if (!activite) {
+    return (
+      <Carte>
+        <p className="text-sm text-neutre-700">
+          Le dossier d&apos;un membre est réservé aux super-administrateurs — ou ta session doit
+          revérifier sa double authentification (reconnecte-toi).
+        </p>
+      </Carte>
+    );
+  }
   const { profil, compteurs, annonces, trocs, signalements, sanctions, score } = activite;
   const recus = signalements.filter((s) => s.sens === "recu");
   const emis = signalements.filter((s) => s.sens === "emis");

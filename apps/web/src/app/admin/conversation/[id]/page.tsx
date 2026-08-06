@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 
 import { euros } from "@/lib/format";
 
-import { adminFetch } from "../../adminFetch";
+import { adminFetchStatus } from "../../adminFetch";
 import { Carte, Pastille } from "../../ui";
 
 export const dynamic = "force-dynamic";
@@ -51,8 +51,21 @@ export default async function AdminConversationPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const fil = await adminFetch<Conversation>(`/admin/conversations/${encodeURIComponent(id)}`);
-  if (!fil) notFound();
+  const reponse = await adminFetchStatus<Conversation>(
+    `/admin/conversations/${encodeURIComponent(id)}`,
+  );
+  if (reponse.status === 404) notFound();
+  const fil = reponse.data;
+  if (!fil) {
+    return (
+      <Carte>
+        <p className="text-sm text-neutre-700">
+          La lecture des conversations est réservée aux super-administrateurs — ou ta session doit
+          revérifier sa double authentification (reconnecte-toi).
+        </p>
+      </Carte>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-4">

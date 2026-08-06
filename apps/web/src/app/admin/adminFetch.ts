@@ -42,3 +42,30 @@ export async function adminPost(path: string, body?: unknown): Promise<boolean> 
   );
   return response.ok;
 }
+
+/**
+ * Variante qui rend aussi le code HTTP : une page ne peut pas répondre
+ * « ce membre n'existe pas » quand le vrai problème est une session
+ * expirée ou un rôle insuffisant.
+ */
+export async function adminFetchStatus<T>(
+  path: string,
+): Promise<{ data: T | null; status: number }> {
+  const jar = await cookies();
+  const response = await fetch(
+    `${process.env.API_INTERNAL_URL ?? "http://localhost:8080"}${path}`,
+    {
+      headers: {
+        cookie: jar
+          .getAll()
+          .map((c) => `${c.name}=${c.value}`)
+          .join("; "),
+      },
+      cache: "no-store",
+    },
+  );
+  return {
+    data: response.ok ? ((await response.json()) as T) : null,
+    status: response.status,
+  };
+}
