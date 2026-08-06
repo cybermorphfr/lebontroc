@@ -80,7 +80,11 @@ test("contre-proposition puis acceptation : troc conclu, objets réservés", asy
   await page.getByLabel("Rechercher un objet").fill(velo);
   await page.getByText(velo).click();
   await page.getByRole("link", { name: "Proposer un troc" }).click();
+  // Bouton grisé : la raison est affichée, pas devinée.
+  await expect(page.getByRole("button", { name: /Envoyer ma proposition/ })).toBeDisabled();
+  await expect(page.getByText(/Il manque ce que TU donnes/)).toBeVisible();
   await page.getByRole("button", { name: `Choisir ${jeu}` }).click();
+  await expect(page.getByText(/Il manque ce que TU donnes/)).toHaveCount(0);
   await page.getByRole("button", { name: /Envoyer ma proposition/ }).click();
   await expect(page.getByPlaceholder("Envoyer un message")).toBeVisible();
 

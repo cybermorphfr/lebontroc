@@ -204,6 +204,12 @@ export default async function TrocDetailPage({
           }
           initialMessages={messages ?? []}
           closed={!ouverte && proposal.status !== "acceptee"}
+          contexte={{
+            proposalStatus: proposal.status,
+            tradeStatus: trade?.status ?? null,
+            deliveryMode: trade?.delivery_mode ?? proposal.trade?.delivery_mode ?? null,
+            isProposer: proposal.is_proposer,
+          }}
         />
       </div>
 

@@ -84,6 +84,12 @@ test("temps réel, anti-contournement et non-lus", async ({
   await page.getByRole("button", { name: /Envoyer ma proposition/ }).click();
   await expect(page.getByPlaceholder("Envoyer un message")).toBeVisible();
 
+  // Suggestions : un clic pré-remplit le champ sans rien envoyer.
+  await page.getByRole("button", { name: "Dis-moi si tu veux d'autres photos." }).click();
+  await expect(page.getByLabel("Ton message")).toHaveValue(
+    "Dis-moi si tu veux d'autres photos.",
+  );
+
   // Anti-contournement : le numéro est masqué, avec un message pédagogique.
   await page.getByLabel("Ton message").fill("appelle-moi au 06 12 34 56 78");
   await page.getByRole("button", { name: "Envoyer" }).click();

@@ -5,9 +5,11 @@ import Link from "next/link";
 import type { MessageResponse } from "@lebontroc/api-client";
 
 import { AvatarLetter } from "@/components/AvatarLetter";
+import { MessageSuggestions } from "@/components/MessageSuggestions";
 import { apiFetch, apiError } from "@/lib/client-api";
 import { timeAgo } from "@/lib/format";
 import { compressImage } from "@/lib/photos";
+import { suggestionsConversation } from "@/lib/suggestions";
 import { useRealtime } from "@/lib/realtime";
 
 /** Messages consécutifs du même auteur à moins de 10 min : un seul groupe. */
@@ -45,12 +47,20 @@ export function Conversation({
   otherPseudo,
   initialMessages,
   closed,
+  contexte,
 }: {
   proposalId: string;
   myPseudo: string;
   otherPseudo: string;
   initialMessages: MessageResponse[];
   closed: boolean;
+  /// Avancement du troc : pilote les suggestions de réponse.
+  contexte: {
+    proposalStatus: string;
+    tradeStatus?: string | null;
+    deliveryMode?: string | null;
+    isProposer: boolean;
+  };
 }) {
   const [messages, setMessages] = useState<MessageResponse[]>(initialMessages);
   const [draft, setDraft] = useState("");
@@ -59,6 +69,7 @@ export function Conversation({
   const [redactedNotice, setRedactedNotice] = useState(false);
   const bottom = useRef<HTMLDivElement | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
+  const champ = useRef<HTMLInputElement | null>(null);
 
   const markRead = useCallback(() => {
     void apiFetch(`/proposals/${proposalId}/read`, { method: "POST" });
@@ -305,6 +316,7 @@ export function Conversation({
               </svg>
             </button>
             <input
+              ref={champ}
               aria-label="Ton message"
               placeholder="Envoyer un message"
               value={draft}
@@ -324,6 +336,20 @@ export function Conversation({
             </button>
           </form>
         )}
+        {!closed && draft.trim() === "" ? (
+          <div className="mt-2">
+            <MessageSuggestions
+              suggestions={suggestionsConversation({
+                ...contexte,
+                aucunMessage: messages.length === 0,
+              })}
+              onPick={(suggestion) => {
+                setDraft(suggestion);
+                champ.current?.focus();
+              }}
+            />
+          </div>
+        ) : null}
       </div>
     </section>
   );

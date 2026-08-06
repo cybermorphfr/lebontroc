@@ -4,9 +4,11 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ItemResponse } from "@lebontroc/api-client";
 
+import { MessageSuggestions } from "@/components/MessageSuggestions";
 import { Segmented } from "@/components/ui/Segmented";
 import { Textarea } from "@/components/ui/Textarea";
 import { apiFetch, apiError } from "@/lib/client-api";
+import { suggestionsProposition } from "@/lib/suggestions";
 
 /** Le composeur « ça contre ça » — l'écran signature de Lebontroc. */
 export function ProposalComposer({
@@ -90,6 +92,20 @@ export function ProposalComposer({
   }
 
   const ready = offered.size > 0 && requested.size > 0;
+  /// Ce qui manque pour pouvoir envoyer — affiché sous le bouton grisé.
+  const raisonBlocage = useMemo(() => {
+    if (ready) return null;
+    if (mine.length === 0) {
+      return "Tu n'as pas encore d'objet disponible à échanger : publie-en un et reviens ici.";
+    }
+    if (offered.size === 0 && requested.size === 0) {
+      return `Choisis au moins un de tes objets à donner et un objet de ${recipientPseudo}.`;
+    }
+    if (offered.size === 0) {
+      return "Il manque ce que TU donnes : choisis au moins un de tes objets ci-dessus.";
+    }
+    return `Il manque ce que tu reçois : choisis au moins un objet de ${recipientPseudo}.`;
+  }, [ready, mine.length, offered.size, requested.size, recipientPseudo]);
   const soldeCents =
     [...mine.filter((i) => offered.has(i.id))].reduce((s, i) => s + i.value_cents, 0) +
     (cashDirection === "du_proposant" ? cashEuros * 100 : 0) -
@@ -155,13 +171,24 @@ export function ProposalComposer({
         ) : null}
       </section>
 
-      <Textarea
-        id="message"
-        label="Un mot pour accompagner (optionnel)"
-        placeholder="Salut ! Ton vélo m'irait bien — ma console t'intéresse ?"
-        value={message}
-        onChange={(e) => setMessage(e.target.value.slice(0, 500))}
-      />
+      <div className="flex flex-col gap-2">
+        <Textarea
+          id="message"
+          label="Un mot pour accompagner (optionnel)"
+          placeholder="Salut ! Ton vélo m'irait bien — ma console t'intéresse ?"
+          value={message}
+          onChange={(e) => setMessage(e.target.value.slice(0, 500))}
+        />
+        {message.trim() === "" ? (
+          <MessageSuggestions
+            suggestions={suggestionsProposition(
+              theirs.find((i) => requested.has(i.id))?.title ?? "objet",
+            )}
+            onPick={(suggestion) => setMessage(suggestion)}
+            label="Suggestions de mot d'accompagnement"
+          />
+        ) : null}
+      </div>
 
       <section className="flex flex-col gap-2 rounded-[32px] bg-sable p-5 shadow-sm">
         <h2 className="font-display text-lg">Récap</h2>
@@ -196,17 +223,41 @@ export function ProposalComposer({
         </p>
       ) : null}
 
-      <button
-        onClick={send}
-        disabled={!ready || sending}
-        className="flex min-h-12 cursor-pointer items-center justify-center rounded-full bg-[#c67139] px-6 font-display text-base text-creme transition-colors hover:bg-terracotta-600 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {sending
-          ? "Envoi…"
-          : counterOf
-            ? `Envoyer ma contre-proposition à ${recipientPseudo}`
-            : `Envoyer ma proposition à ${recipientPseudo}`}
-      </button>
+      <div className="flex flex-col gap-2">
+        <button
+          onClick={send}
+          disabled={!ready || sending}
+          title={raisonBlocage ?? undefined}
+          aria-describedby={raisonBlocage ? "raison-blocage" : undefined}
+          className="flex min-h-12 cursor-pointer items-center justify-center rounded-full bg-[#c67139] px-6 font-display text-base text-creme transition-colors hover:bg-terracotta-600 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {sending
+            ? "Envoi…"
+            : counterOf
+              ? `Envoyer ma contre-proposition à ${recipientPseudo}`
+              : `Envoyer ma proposition à ${recipientPseudo}`}
+        </button>
+        {raisonBlocage ? (
+          <p
+            id="raison-blocage"
+            role="status"
+            className="flex items-start gap-2 rounded-3xl bg-terracotta-100/70 px-4 py-2.5 text-sm text-terracotta-800"
+          >
+            <span aria-hidden>💡</span>
+            <span>
+              {raisonBlocage}
+              {mine.length === 0 ? (
+                <>
+                  {" "}
+                  <a href="/publier" className="font-semibold underline">
+                    Publier un objet
+                  </a>
+                </>
+              ) : null}
+            </span>
+          </p>
+        ) : null}
+      </div>
     </div>
   );
 }
