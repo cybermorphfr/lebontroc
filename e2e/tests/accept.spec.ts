@@ -99,6 +99,8 @@ test("contre-proposition puis acceptation : troc conclu, objets réservés", asy
   // La composition initiale est préremplie (draisienne offerte, jeu demandé).
   await expect(pageAlice.getByRole("button", { name: `Retirer ${velo}` })).toBeVisible();
   await expect(pageAlice.getByRole("button", { name: `Retirer ${jeu}` })).toBeVisible();
+  // Une contre-proposition peut réclamer une compensation financière.
+  await expect(pageAlice.getByText("J'en demande")).toBeVisible();
   await pageAlice.getByRole("button", { name: /Envoyer ma contre-proposition/ }).click();
 
   // Un seul endroit pour négocier : le fil porte les deux offres, et se lit

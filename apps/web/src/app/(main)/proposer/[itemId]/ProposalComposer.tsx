@@ -93,6 +93,20 @@ export function ProposalComposer({
   }
 
   const ready = offered.size > 0 && requested.size > 0;
+
+  // Écart de valeur AVANT soulte : positif = je reçois plus que je ne donne.
+  const ecartCents = useMemo(() => {
+    const somme = (liste: ItemResponse[], selection: Set<string>) =>
+      liste.filter((i) => selection.has(i.id)).reduce((t, i) => t + i.value_cents, 0);
+    return somme(theirs, requested) - somme(mine, offered);
+  }, [mine, theirs, offered, requested]);
+
+  /// Propose la soulte qui recolle l'écart, dans la limite du plafond.
+  function equilibrer() {
+    const montant = Math.min(Math.round(Math.abs(ecartCents) / 100), plafondEuros);
+    setCashDirection(ecartCents > 0 ? "du_proposant" : "du_destinataire");
+    setCashEuros(montant);
+  }
   /// Ce qui manque pour pouvoir envoyer — affiché sous le bouton grisé.
   const raisonBlocage = useMemo(() => {
     if (ready) return null;
@@ -132,11 +146,15 @@ export function ProposalComposer({
 
       <section className="flex flex-col gap-3 rounded-[32px] bg-sable p-5 shadow-sm">
         <h2 className="font-display text-lg">Une soulte pour équilibrer ?</h2>
+        <p className="-mt-1 text-xs text-neutre-700">
+          Si l&apos;échange penche d&apos;un côté, ajoute des euros — ou demande à{" "}
+          {recipientPseudo} d&apos;en ajouter.
+        </p>
         <Segmented
           options={[
             { value: "aucune", label: "Pas de soulte" },
             { value: "du_proposant", label: "J'ajoute des euros" },
-            { value: "du_destinataire", label: `${recipientPseudo} en ajoute` },
+            { value: "du_destinataire", label: "J'en demande" },
           ]}
           value={cashDirection}
           onChange={setCashDirection}
@@ -193,6 +211,7 @@ export function ProposalComposer({
 
       <section className="flex flex-col gap-2 rounded-[32px] bg-sable p-5 shadow-sm">
         <h2 className="font-display text-lg">Récap</h2>
+        {ready ? <Solde ecartCents={ecartCents} plafondEuros={plafondEuros} onEquilibrer={equilibrer} /> : null}
         <div className="grid grid-cols-2 gap-3 text-sm">
           <RecapColumn
             title="Tu donnes"
@@ -358,6 +377,47 @@ function RecapColumn({
       <span className={`mt-1 border-t border-encre/10 pt-1 text-sm font-semibold ${style.texte}`}>
         Total ~{euros(total)}
       </span>
+    </div>
+  );
+}
+
+/**
+ * Le déséquilibre de l'échange, chiffré — avec le geste qui le corrige :
+ * ajouter des euros, ou en demander.
+ */
+function Solde({
+  ecartCents,
+  plafondEuros,
+  onEquilibrer,
+}: {
+  ecartCents: number;
+  plafondEuros: number;
+  onEquilibrer: () => void;
+}) {
+  if (ecartCents === 0) {
+    return (
+      <p className="rounded-2xl bg-sauge-100 px-3 py-2 text-xs text-sauge-800">
+        ⚖️ Les valeurs s&apos;équilibrent — pas besoin de soulte.
+      </p>
+    );
+  }
+  const enMaFaveur = ecartCents > 0;
+  const ecartEuros = Math.round(Math.abs(ecartCents) / 100);
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-creme px-3 py-2 text-xs">
+      <span className="text-neutre-700">
+        ⚖️ L&apos;échange penche de <strong>{ecartEuros} €</strong>{" "}
+        {enMaFaveur ? "en ta faveur" : "en ta défaveur"}.
+      </span>
+      {plafondEuros > 0 ? (
+        <button
+          type="button"
+          onClick={onEquilibrer}
+          className="cursor-pointer rounded-full border border-terracotta-500 px-3 py-1 font-semibold text-terracotta-800 transition-colors hover:bg-terracotta-100"
+        >
+          {enMaFaveur ? `Ajouter ${Math.min(ecartEuros, plafondEuros)} €` : `Demander ${Math.min(ecartEuros, plafondEuros)} €`}
+        </button>
+      ) : null}
     </div>
   );
 }
