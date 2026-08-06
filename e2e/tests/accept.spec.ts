@@ -110,7 +110,9 @@ test("contre-proposition puis acceptation : troc conclu, objets réservés", asy
   ).toBeVisible();
   await expect(pageAlice.getByText("Tu donnes").first()).toBeVisible();
   await expect(pageAlice.getByText(/propose$/).first()).toBeVisible();
-  await expect(pageAlice.getByTestId("statut-proposition")).toHaveText("Envoyée");
+  // « Vue » dès que l'autre partie a suivi la contre-proposition en temps
+  // réel — sinon « Envoyée » : les deux valent, seule compte l'ouverture.
+  await expect(pageAlice.getByTestId("statut-proposition")).toHaveText(/Envoyée|Vue/);
 
   // Bob voit la contre-proposition et l'accepte en main propre.
   await page.goto("/trocs");
