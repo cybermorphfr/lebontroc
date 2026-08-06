@@ -120,7 +120,7 @@ test("contre-proposition puis acceptation : troc conclu, objets réservés", asy
   await page.getByRole("button", { name: "Accepter", exact: true }).click();
   await page.getByRole("button", { name: "En main propre" }).click();
   await expect(page.getByText(/Troc conclu/)).toBeVisible();
-  await expect(page.getByText("Acceptée")).toBeVisible();
+  await expect(page.getByTestId("statut-proposition")).toHaveText("Acceptée");
 
   // Les objets sont réservés dans les deux dressings.
   await page.goto("/dressing");
