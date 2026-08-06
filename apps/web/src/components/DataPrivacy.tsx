@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { PasswordInput } from "@/components/ui/PasswordInput";
 import { apiFetch, apiError } from "@/lib/client-api";
 
 /** RGPD (F6.3) : export de ses données + suppression de compte. */
@@ -70,13 +71,12 @@ export function DataPrivacy() {
             Ton profil et tes objets disparaîtront. Tes trocs finalisés avec soulte restent en
             base sous forme anonymisée (obligations comptables). C&apos;est définitif.
           </p>
-          <input
-            type="password"
+          <PasswordInput
+            id="mot-de-passe-suppression"
             aria-label="Mot de passe"
             placeholder="Ton mot de passe pour confirmer"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="rounded-2xl border border-neutre-300 bg-creme px-3 py-2 text-sm outline-none"
           />
           <div className="flex items-center gap-2">
             <button

@@ -99,7 +99,14 @@ test("déconnexion puis reconnexion", async ({ page }) => {
 test("identifiants invalides : message générique", async ({ page }) => {
   await page.goto("/connexion");
   await page.getByLabel("E-mail").fill("inconnu@exemple.fr");
-  await page.getByLabel("Mot de passe").fill("nimporte-quoi");
+  const champMdp = page.getByLabel("Mot de passe");
+  await champMdp.fill("nimporte-quoi");
+  // La bascule révèle puis remasque la saisie.
+  await expect(champMdp).toHaveAttribute("type", "password");
+  await page.getByRole("button", { name: "Afficher le mot de passe" }).click();
+  await expect(champMdp).toHaveAttribute("type", "text");
+  await page.getByRole("button", { name: "Masquer le mot de passe" }).click();
+  await expect(champMdp).toHaveAttribute("type", "password");
   await page.getByRole("button", { name: "Me connecter" }).click();
   await expect(
     page.getByText("E-mail ou mot de passe incorrect. Vérifie et réessaie."),

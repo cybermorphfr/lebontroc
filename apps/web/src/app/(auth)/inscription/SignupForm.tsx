@@ -6,6 +6,7 @@ import { useRef, useState } from "react";
 
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { PasswordInput } from "@/components/ui/PasswordInput";
 import { apiError } from "@/lib/client-api";
 
 type FieldErrors = Partial<Record<"pseudo" | "email" | "password" | "postal", string>>;
@@ -25,7 +26,6 @@ export function SignupForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [postal, setPostal] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -99,28 +99,16 @@ export function SignupForm() {
         error={errors.email}
         autoComplete="email"
       />
-      <div className="relative">
-        <Input
-          id="password"
-          type={showPassword ? "text" : "password"}
-          label="Mot de passe"
-          hint="8 caractères minimum."
-          hintValid={password.length >= 8}
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          error={errors.password}
-          autoComplete="new-password"
-          className="pr-10"
-        />
-        <button
-          type="button"
-          aria-label={showPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"}
-          onClick={() => setShowPassword((v) => !v)}
-          className="absolute right-3 top-7 cursor-pointer text-neutre-500 hover:text-encre"
-        >
-          <EyeIcon open={showPassword} />
-        </button>
-      </div>
+      <PasswordInput
+        id="password"
+        label="Mot de passe"
+        hint="8 caractères minimum."
+        hintValid={password.length >= 8}
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        error={errors.password}
+        autoComplete="new-password"
+      />
       <Input
         id="postal"
         label="Code postal"
@@ -151,41 +139,12 @@ export function SignupForm() {
       </p>
       <p className="text-center text-xs text-neutre-500">
         En créant ton compte, tu acceptes les{" "}
-        <a href="#" className="underline">
+        <Link href="/cgu" className="underline">
           conditions d&apos;utilisation
-        </a>
+        </Link>
         .
       </p>
     </form>
   );
 }
 
-function EyeIcon({ open }: { open: boolean }) {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      {open ? (
-        <>
-          <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" />
-          <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
-          <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
-          <line x1="2" x2="22" y1="2" y2="22" />
-        </>
-      ) : (
-        <>
-          <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
-          <circle cx="12" cy="12" r="3" />
-        </>
-      )}
-    </svg>
-  );
-}

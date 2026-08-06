@@ -6,6 +6,7 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { PasswordInput } from "@/components/ui/PasswordInput";
 import { apiError } from "@/lib/client-api";
 
 export function LoginForm() {
@@ -44,9 +45,8 @@ export function LoginForm() {
         onChange={(e) => setEmail(e.target.value)}
         autoComplete="email"
       />
-      <Input
+      <PasswordInput
         id="password"
-        type="password"
         label="Mot de passe"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
