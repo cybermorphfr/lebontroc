@@ -47,6 +47,16 @@ type Signalement = {
   created_at: string;
 };
 
+type Conversation = {
+  proposal_id: string;
+  autre_pseudo: string;
+  statut_proposition: string;
+  messages: number;
+  signales: number;
+  dernier_message: string | null;
+  apercu: string | null;
+};
+
 type Activite = {
   profil: {
     id: string;
@@ -106,9 +116,10 @@ export default async function AdminMembrePage({
   params: Promise<{ pseudo: string }>;
 }) {
   const { pseudo } = await params;
-  const activite = await adminFetch<Activite>(
-    `/admin/users/${encodeURIComponent(pseudo)}/activite`,
-  );
+  const [activite, conversations] = await Promise.all([
+    adminFetch<Activite>(`/admin/users/${encodeURIComponent(pseudo)}/activite`),
+    adminFetch<Conversation[]>(`/admin/users/${encodeURIComponent(pseudo)}/conversations`),
+  ]);
   if (!activite) notFound();
   const { profil, compteurs, annonces, trocs, signalements, sanctions, score } = activite;
   const recus = signalements.filter((s) => s.sens === "recu");
@@ -267,6 +278,42 @@ export default async function AdminMembrePage({
             ))}
           </ul>
         )}
+      </Carte>
+
+      <Carte titre={`Ses conversations (${conversations?.length ?? 0})`}>
+        {!conversations || conversations.length === 0 ? (
+          <p className="text-sm text-neutre-700">Aucun échange de messages.</p>
+        ) : (
+          <ul className="flex flex-col gap-1.5">
+            {conversations.map((c) => (
+              <li
+                key={c.proposal_id}
+                className="flex flex-wrap items-center gap-2 rounded-2xl bg-creme px-3 py-2 text-sm"
+              >
+                <Link
+                  href={`/admin/conversation/${c.proposal_id}`}
+                  className="font-semibold hover:underline"
+                >
+                  avec {c.autre_pseudo}
+                </Link>
+                <span className="text-xs text-neutre-700">
+                  {c.messages} message{c.messages > 1 ? "s" : ""} ·{" "}
+                  {c.dernier_message ? timeAgo(c.dernier_message) : "—"}
+                </span>
+                <Pastille ton="neutre">{c.statut_proposition}</Pastille>
+                {c.signales > 0 ? (
+                  <Pastille ton="alerte">{c.signales} message(s) signalé(s)</Pastille>
+                ) : null}
+                {c.apercu ? (
+                  <span className="w-full truncate text-xs text-neutre-700">« {c.apercu} »</span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="text-xs text-neutre-700">
+          Correspondance privée : ouvrir un fil inscrit ton nom au journal d&apos;audit.
+        </p>
       </Carte>
 
       <div className="grid gap-4 sm:grid-cols-2">

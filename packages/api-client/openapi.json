@@ -34,6 +34,41 @@
         }
       }
     },
+    "/admin/conversations/{proposal_id}": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Le fil complet d'un échange. C'est de la correspondance privée : la\nlecture est réservée aux super-administrateurs ET inscrite au journal\nd'audit — qui a lu quoi, quand. Un modérateur qui fouille sans raison\nlaisse une trace.",
+        "operationId": "admin_conversation",
+        "parameters": [
+          {
+            "name": "proposal_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fil complet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminConversationDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Échange inconnu"
+          }
+        }
+      }
+    },
     "/admin/dashboard": {
       "get": {
         "tags": [
@@ -558,6 +593,43 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/UserActivityResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Membre inconnu"
+          }
+        }
+      }
+    },
+    "/admin/users/{pseudo}/conversations": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "La liste des fils d'un membre. Lister les fils ne révèle qu'un aperçu ;\nlire un fil entier est un acte distinct, tracé (voir plus bas).",
+        "operationId": "admin_user_conversations",
+        "parameters": [
+          {
+            "name": "pseudo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fils de discussion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AdminConversationDto"
+                  }
                 }
               }
             }
@@ -3659,6 +3731,106 @@
           }
         }
       },
+      "AdminConversationDetail": {
+        "type": "object",
+        "required": [
+          "proposal_id",
+          "statut",
+          "proposer_pseudo",
+          "recipient_pseudo",
+          "cash_cents",
+          "cash_direction",
+          "created_at",
+          "messages"
+        ],
+        "properties": {
+          "cash_cents": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "cash_direction": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminMessageDto"
+            }
+          },
+          "objets_demandes": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "objets_offerts": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "proposal_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "proposer_pseudo": {
+            "type": "string"
+          },
+          "recipient_pseudo": {
+            "type": "string"
+          },
+          "statut": {
+            "type": "string"
+          }
+        }
+      },
+      "AdminConversationDto": {
+        "type": "object",
+        "required": [
+          "proposal_id",
+          "autre_pseudo",
+          "statut_proposition",
+          "messages",
+          "signales"
+        ],
+        "properties": {
+          "apercu": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "autre_pseudo": {
+            "type": "string"
+          },
+          "dernier_message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "messages": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "proposal_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "signales": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "statut_proposition": {
+            "type": "string"
+          }
+        }
+      },
       "AdminDisputeDetail": {
         "type": "object",
         "required": [
@@ -3894,6 +4066,53 @@
           "value_cents": {
             "type": "integer",
             "format": "int32"
+          }
+        }
+      },
+      "AdminMessageDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "sender_pseudo",
+          "body",
+          "redacted",
+          "signale",
+          "created_at"
+        ],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "photo_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "read_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "redacted": {
+            "type": "boolean",
+            "description": "Le masquage automatique des coordonnées a mordu sur ce message."
+          },
+          "sender_pseudo": {
+            "type": "string"
+          },
+          "signale": {
+            "type": "boolean"
           }
         }
       },

@@ -475,3 +475,142 @@ pub async fn admin_suggest_users(
             .collect(),
     ))
 }
+
+// ————— Conversations (modération) —————
+
+#[derive(Serialize, ToSchema)]
+pub struct AdminConversationDto {
+    pub proposal_id: Uuid,
+    pub autre_pseudo: String,
+    pub statut_proposition: String,
+    pub messages: i64,
+    pub signales: i64,
+    pub dernier_message: Option<DateTime<Utc>>,
+    pub apercu: Option<String>,
+}
+
+/// La liste des fils d'un membre. Lister les fils ne révèle qu'un aperçu ;
+/// lire un fil entier est un acte distinct, tracé (voir plus bas).
+#[utoipa::path(
+    get,
+    path = "/admin/users/{pseudo}/conversations",
+    tag = "admin",
+    responses(
+        (status = 200, description = "Fils de discussion", body = [AdminConversationDto]),
+        (status = 404, description = "Membre inconnu")
+    )
+)]
+pub async fn admin_user_conversations(
+    State(state): State<AppState>,
+    admin: AdminActor,
+    Path(pseudo): Path<String>,
+) -> Result<Json<Vec<AdminConversationDto>>, ApiError> {
+    admin.require_super()?;
+    let profil = infra::admin_items_repo::user_profile(&state.pool, &pseudo)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Ce membre n'existe pas."))?;
+    let fils = infra::admin_items_repo::user_conversations(&state.pool, profil.id).await?;
+    Ok(Json(
+        fils.into_iter()
+            .map(|c| AdminConversationDto {
+                proposal_id: c.proposal_id,
+                autre_pseudo: c.autre_pseudo,
+                statut_proposition: c.statut_proposition,
+                messages: c.messages,
+                signales: c.signales,
+                dernier_message: c.dernier_message,
+                apercu: c.apercu,
+            })
+            .collect(),
+    ))
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct AdminConversationDetail {
+    pub proposal_id: Uuid,
+    pub statut: String,
+    pub proposer_pseudo: String,
+    pub recipient_pseudo: String,
+    pub cash_cents: i32,
+    pub cash_direction: String,
+    pub created_at: DateTime<Utc>,
+    pub objets_demandes: Option<String>,
+    pub objets_offerts: Option<String>,
+    pub messages: Vec<AdminMessageDto>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct AdminMessageDto {
+    pub id: Uuid,
+    pub sender_pseudo: String,
+    pub body: String,
+    pub photo_url: Option<String>,
+    /// Le masquage automatique des coordonnées a mordu sur ce message.
+    pub redacted: bool,
+    pub signale: bool,
+    pub created_at: DateTime<Utc>,
+    pub read_at: Option<DateTime<Utc>>,
+}
+
+/// Le fil complet d'un échange. C'est de la correspondance privée : la
+/// lecture est réservée aux super-administrateurs ET inscrite au journal
+/// d'audit — qui a lu quoi, quand. Un modérateur qui fouille sans raison
+/// laisse une trace.
+#[utoipa::path(
+    get,
+    path = "/admin/conversations/{proposal_id}",
+    tag = "admin",
+    responses(
+        (status = 200, description = "Fil complet", body = AdminConversationDetail),
+        (status = 404, description = "Échange inconnu")
+    )
+)]
+pub async fn admin_conversation(
+    State(state): State<AppState>,
+    admin: AdminActor,
+    Path(proposal_id): Path<Uuid>,
+) -> Result<Json<AdminConversationDetail>, ApiError> {
+    admin.require_super()?;
+    let contexte = infra::admin_items_repo::conversation_context(&state.pool, proposal_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Cet échange n'existe pas."))?;
+    let messages = infra::admin_items_repo::conversation_messages(&state.pool, proposal_id).await?;
+    record_admin_action(
+        &state,
+        admin.user_id,
+        "conversation_consultee",
+        "proposal",
+        &proposal_id.to_string(),
+        Some(&format!(
+            "{} ↔ {} ({} messages)",
+            contexte.proposer_pseudo,
+            contexte.recipient_pseudo,
+            messages.len()
+        )),
+    )
+    .await;
+    Ok(Json(AdminConversationDetail {
+        proposal_id: contexte.proposal_id,
+        statut: contexte.statut,
+        proposer_pseudo: contexte.proposer_pseudo,
+        recipient_pseudo: contexte.recipient_pseudo,
+        cash_cents: contexte.cash_cents,
+        cash_direction: contexte.cash_direction,
+        created_at: contexte.created_at,
+        objets_demandes: contexte.objets_demandes,
+        objets_offerts: contexte.objets_offerts,
+        messages: messages
+            .into_iter()
+            .map(|m| AdminMessageDto {
+                id: m.id,
+                sender_pseudo: m.sender_pseudo,
+                body: m.body,
+                photo_url: m.photo_key.map(|k| state.photos.public_url(&k)),
+                redacted: m.redacted,
+                signale: m.signale,
+                created_at: m.created_at,
+                read_at: m.read_at,
+            })
+            .collect(),
+    }))
+}

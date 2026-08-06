@@ -90,6 +90,14 @@ pub fn router() -> Router<AppState> {
             "/admin/users/{pseudo}/activite",
             get(moderation::admin_user_activity),
         )
+        .route(
+            "/admin/users/{pseudo}/conversations",
+            get(moderation::admin_user_conversations),
+        )
+        .route(
+            "/admin/conversations/{proposal_id}",
+            get(moderation::admin_conversation),
+        )
         .route("/admin/users/{pseudo}/role", post(handlers::admin_set_role))
         .layer(middleware::from_fn_with_state(debit, limiter))
 }

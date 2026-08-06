@@ -337,3 +337,117 @@ pub async fn suggest_users(pool: &PgPool, q: &str) -> sqlx::Result<Vec<UserSugge
     .fetch_all(pool)
     .await
 }
+
+// ————— Conversations (modération) —————
+
+/// Un fil de discussion vu de l'administration : l'échange concerné, les
+/// deux interlocuteurs, le volume et la dernière activité.
+#[derive(Debug, Clone, FromRow)]
+pub struct AdminConversation {
+    pub proposal_id: Uuid,
+    pub autre_pseudo: String,
+    pub statut_proposition: String,
+    pub messages: i64,
+    pub signales: i64,
+    pub dernier_message: Option<DateTime<Utc>>,
+    pub apercu: Option<String>,
+}
+
+pub async fn user_conversations(
+    pool: &PgPool,
+    user_id: Uuid,
+) -> sqlx::Result<Vec<AdminConversation>> {
+    sqlx::query_as::<_, AdminConversation>(
+        "SELECT p.id AS proposal_id, \
+                CASE WHEN p.proposer_id = $1 THEN r.pseudo::text ELSE pr.pseudo::text END \
+                    AS autre_pseudo, \
+                p.status AS statut_proposition, \
+                (SELECT count(*) FROM messages m WHERE m.proposal_id = p.id) AS messages, \
+                (SELECT count(*) FROM reports rp WHERE rp.target_type = 'message' \
+                 AND rp.target_id IN (SELECT id FROM messages WHERE proposal_id = p.id)) \
+                    AS signales, \
+                (SELECT max(m.created_at) FROM messages m WHERE m.proposal_id = p.id) \
+                    AS dernier_message, \
+                (SELECT left(m.body, 100) FROM messages m WHERE m.proposal_id = p.id \
+                 ORDER BY m.created_at DESC LIMIT 1) AS apercu \
+         FROM proposals p \
+         JOIN users pr ON pr.id = p.proposer_id \
+         JOIN users r ON r.id = p.recipient_id \
+         WHERE (p.proposer_id = $1 OR p.recipient_id = $1) \
+           AND EXISTS (SELECT 1 FROM messages m WHERE m.proposal_id = p.id) \
+         ORDER BY dernier_message DESC NULLS LAST LIMIT 100",
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+}
+
+/// Un message du fil, avec son auteur et son éventuel signalement.
+#[derive(Debug, Clone, FromRow)]
+pub struct AdminMessage {
+    pub id: Uuid,
+    pub sender_pseudo: String,
+    pub body: String,
+    pub photo_key: Option<String>,
+    /// Le masquage automatique des coordonnées a-t-il mordu ?
+    pub redacted: bool,
+    pub signale: bool,
+    pub created_at: DateTime<Utc>,
+    pub read_at: Option<DateTime<Utc>>,
+}
+
+/// Les deux interlocuteurs et l'objet de la négociation — le contexte
+/// sans lequel un fil de messages ne veut rien dire.
+#[derive(Debug, Clone, FromRow)]
+pub struct ConversationContext {
+    pub proposal_id: Uuid,
+    pub statut: String,
+    pub proposer_pseudo: String,
+    pub recipient_pseudo: String,
+    pub cash_cents: i32,
+    pub cash_direction: String,
+    pub created_at: DateTime<Utc>,
+    pub objets_demandes: Option<String>,
+    pub objets_offerts: Option<String>,
+}
+
+pub async fn conversation_context(
+    pool: &PgPool,
+    proposal_id: Uuid,
+) -> sqlx::Result<Option<ConversationContext>> {
+    sqlx::query_as::<_, ConversationContext>(
+        "SELECT p.id AS proposal_id, p.status AS statut, \
+                pr.pseudo::text AS proposer_pseudo, r.pseudo::text AS recipient_pseudo, \
+                p.cash_cents, p.cash_direction, p.created_at, \
+                (SELECT string_agg(i.title, ', ') FROM proposal_items pi \
+                 JOIN items i ON i.id = pi.item_id \
+                 WHERE pi.proposal_id = p.id AND pi.side = 'demande') AS objets_demandes, \
+                (SELECT string_agg(i.title, ', ') FROM proposal_items pi \
+                 JOIN items i ON i.id = pi.item_id \
+                 WHERE pi.proposal_id = p.id AND pi.side = 'offert') AS objets_offerts \
+         FROM proposals p \
+         JOIN users pr ON pr.id = p.proposer_id \
+         JOIN users r ON r.id = p.recipient_id \
+         WHERE p.id = $1",
+    )
+    .bind(proposal_id)
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn conversation_messages(
+    pool: &PgPool,
+    proposal_id: Uuid,
+) -> sqlx::Result<Vec<AdminMessage>> {
+    sqlx::query_as::<_, AdminMessage>(
+        "SELECT m.id, u.pseudo::text AS sender_pseudo, m.body, m.photo_key, m.redacted, \
+                EXISTS (SELECT 1 FROM reports r WHERE r.target_type = 'message' \
+                        AND r.target_id = m.id) AS signale, \
+                m.created_at, m.read_at \
+         FROM messages m JOIN users u ON u.id = m.sender_id \
+         WHERE m.proposal_id = $1 ORDER BY m.created_at",
+    )
+    .bind(proposal_id)
+    .fetch_all(pool)
+    .await
+}

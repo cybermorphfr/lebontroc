@@ -45,6 +45,8 @@ use utoipa::{Modify, OpenApi};
         crate::admin::moderation::admin_moderate_item,
         crate::admin::moderation::admin_user_activity,
         crate::admin::moderation::admin_suggest_users,
+        crate::admin::moderation::admin_user_conversations,
+        crate::admin::moderation::admin_conversation,
         crate::admin::handlers::admin_list_staff,
         crate::admin::handlers::admin_set_role,
         crate::auth::handlers::track_event,

@@ -4366,7 +4366,19 @@ async fn moderation_des_annonces_et_dossier_membre(pool: PgPool) {
     let velo = publish_valued(&app, &alice, "Vélo à modérer", 15_000).await;
     let bob = verified_user(&app, &emails, "mod2@exemple.fr", "mbob1").await;
     let jeu = publish_valued(&app, &bob, "Jeu à modérer", 4_000).await;
-    simple_proposal(&app, &bob, &jeu, &velo).await;
+    let proposition = simple_proposal(&app, &bob, &jeu, &velo).await;
+    // Un message dans le fil : c'est ce que la modération doit pouvoir lire.
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/proposals/{proposition}/messages"),
+            Some(serde_json::json!({"body": "Ton vélo est-il toujours dispo ?"})),
+            Some(&bob),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
 
     // Bob signale l'annonce d'Alice : le back-office doit la voir remonter.
     let response = call(
@@ -4512,6 +4524,40 @@ async fn moderation_des_annonces_et_dossier_membre(pool: PgPool) {
     assert_eq!(suggestions.len(), 1);
     assert_eq!(suggestions[0]["pseudo"], "malice1");
     assert_eq!(suggestions[0]["annonces"], 1);
+
+    // Les conversations du membre : listées, puis lisibles en entier —
+    // et la lecture laisse une trace nominative au journal.
+    let fils = body_json(
+        call(
+            &app,
+            admin_request("GET", "/admin/users/malice1/conversations", None),
+        )
+        .await,
+    )
+    .await;
+    let fils = fils.as_array().expect("conversations");
+    assert_eq!(fils.len(), 1);
+    assert_eq!(fils[0]["autre_pseudo"], "mbob1");
+    assert!(fils[0]["messages"].as_i64().expect("messages") >= 1);
+    let proposal_id = fils[0]["proposal_id"].as_str().expect("id").to_string();
+
+    let fil = body_json(
+        call(
+            &app,
+            admin_request("GET", &format!("/admin/conversations/{proposal_id}"), None),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(fil["proposer_pseudo"], "mbob1");
+    assert_eq!(fil["recipient_pseudo"], "malice1");
+    assert!(!fil["messages"].as_array().expect("messages").is_empty());
+    let audit = body_json(call(&app, admin_request("GET", "/admin/audit", None)).await).await;
+    assert!(audit
+        .as_array()
+        .expect("audit")
+        .iter()
+        .any(|e| e["action"] == "conversation_consultee"));
 
     // Un membre inconnu : 404 franc, pas une page vide.
     let response = call(
