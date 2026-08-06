@@ -7,7 +7,7 @@ import type { MessageResponse, ProposalChainEntry } from "@lebontroc/api-client"
 import { AvatarLetter } from "@/components/AvatarLetter";
 import { MessageSuggestions } from "@/components/MessageSuggestions";
 import { apiFetch, apiError } from "@/lib/client-api";
-import { timeAgo } from "@/lib/format";
+import { ECHANGE, euros, timeAgo } from "@/lib/format";
 import { compressImage } from "@/lib/photos";
 import { suggestionsConversation } from "@/lib/suggestions";
 import { useRealtime } from "@/lib/realtime";
@@ -49,6 +49,7 @@ export function Conversation({
   chain,
   closed,
   contexte,
+  actions,
 }: {
   proposalId: string;
   myPseudo: string;
@@ -57,6 +58,8 @@ export function Conversation({
   /// Toute la négociation : proposition initiale et contre-propositions.
   chain: ProposalChainEntry[];
   closed: boolean;
+  /// Accepter / contre-proposer / refuser, sous l'offre en cours.
+  actions?: React.ReactNode;
   /// Avancement du troc : pilote les suggestions de réponse.
   contexte: {
     proposalStatus: string;
@@ -234,6 +237,7 @@ export function Conversation({
                 entree={element.entree}
                 otherPseudo={otherPseudo}
                 courante={element.entree.id === proposalId}
+                actions={element.entree.id === proposalId ? actions : null}
               />
             );
           }
@@ -404,20 +408,30 @@ function PropositionCard({
   entree,
   otherPseudo,
   courante,
+  actions,
 }: {
   entree: ProposalChainEntry;
   otherPseudo: string;
   courante: boolean;
+  actions?: React.ReactNode;
 }) {
   // L'auteur « offre » ce qu'il donne : si c'est moi, sa colonne devient
   // la mienne (droite) et ce qu'il demande vient de l'autre (gauche).
   const sien = entree.is_mine ? entree.requested : entree.offered;
   const mien = entree.is_mine ? entree.offered : entree.requested;
-  const soulteEuros = Math.round(entree.cash_cents / 100);
+  const soulteCents = entree.cash_cents;
   // La soulte suit celui qui la verse : le proposant est l'auteur.
-  const soulteAuteur = entree.cash_direction === "du_proposant";
-  const soulteSienne = soulteEuros > 0 && soulteAuteur !== entree.is_mine;
-  const soulteMienne = soulteEuros > 0 && soulteAuteur === entree.is_mine;
+  const soulteDeLAuteur = entree.cash_direction === "du_proposant";
+  const soulteSienne = soulteDeLAuteur !== entree.is_mine ? soulteCents : 0;
+  const soulteMienne = soulteDeLAuteur === entree.is_mine ? soulteCents : 0;
+
+  const total = (items: ProposalChainEntry["offered"]) =>
+    items.reduce((somme, item) => somme + item.value_cents, 0);
+  // Ce que je reçois = ses objets + la soulte qu'il verse ; ce que je
+  // donne = mes objets + la soulte que je verse.
+  const recu = total(sien) + soulteSienne;
+  const donne = total(mien) + soulteMienne;
+  const ecart = recu - donne;
 
   return (
     <div className="flex flex-col gap-1">
@@ -431,18 +445,37 @@ function PropositionCard({
           🔁 {entree.is_mine ? "Ta proposition" : `Proposition de ${entree.author_pseudo}`}
         </p>
         <div className="flex items-stretch gap-2">
-          <Colonne titre={`${otherPseudo} propose`} items={sien} soulte={soulteSienne ? soulteEuros : 0} />
+          <Colonne
+            titre={`${otherPseudo} propose`}
+            items={sien}
+            soulte={soulteSienne}
+            ton="recoit"
+          />
           <span aria-hidden className="self-center text-lg text-neutre-700">
             ↔
           </span>
-          <Colonne titre="Tu donnes" items={mien} soulte={soulteMienne ? soulteEuros : 0} align="right" />
+          <Colonne titre="Tu donnes" items={mien} soulte={soulteMienne} ton="donne" align="right" />
         </div>
+
+        <div className="mt-2 flex items-center justify-between gap-2 border-t border-encre/10 pt-2 text-[11px]">
+          <span className={ECHANGE.recoit.texte}>Tu reçois ~{euros(recu)}</span>
+          <span className="font-semibold text-neutre-700">
+            {ecart === 0
+              ? "Échange équilibré"
+              : ecart > 0
+                ? `À ton avantage : +${euros(ecart)}`
+                : `À ton désavantage : −${euros(-ecart)}`}
+          </span>
+          <span className={ECHANGE.donne.texte}>Tu donnes ~{euros(donne)}</span>
+        </div>
+
         {entree.message ? (
           <p className="mt-2 whitespace-pre-line text-sm text-neutre-700">« {entree.message} »</p>
         ) : null}
         <p className="mt-2 text-[11px] text-neutre-700">
           {LIBELLE_STATUT[entree.status] ?? entree.status}
         </p>
+        {actions ? <div className="mt-2 border-t border-encre/10 pt-2">{actions}</div> : null}
       </div>
     </div>
   );
@@ -452,23 +485,32 @@ function Colonne({
   titre,
   items,
   soulte,
+  ton,
   align = "left",
 }: {
   titre: string;
   items: ProposalChainEntry["offered"];
   soulte: number;
+  ton: "donne" | "recoit";
   align?: "left" | "right";
 }) {
+  const style = ECHANGE[ton];
   return (
-    <div className={`flex min-w-0 flex-1 flex-col gap-1 ${align === "right" ? "items-end text-right" : ""}`}>
-      <span className="text-[11px] font-semibold uppercase tracking-wide text-neutre-700">
+    <div
+      className={`flex min-w-0 flex-1 flex-col gap-1 rounded-2xl p-2 ${style.fond} ${
+        align === "right" ? "items-end text-right" : ""
+      }`}
+    >
+      <span className={`text-[11px] font-semibold uppercase tracking-wide ${style.texte}`}>
         {titre}
       </span>
-      <ul className="flex flex-col gap-1">
+      <ul className="flex w-full flex-col gap-1">
         {items.map((item) => (
           <li
             key={item.item_id}
-            className={`flex items-center gap-1.5 text-sm ${align === "right" ? "flex-row-reverse text-right" : ""}`}
+            className={`flex items-center gap-1.5 text-sm ${
+              align === "right" ? "flex-row-reverse text-right" : ""
+            }`}
           >
             {item.photo_url ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -480,7 +522,7 @@ function Colonne({
         {items.length === 0 ? <li className="text-sm text-neutre-700">—</li> : null}
       </ul>
       {soulte > 0 ? (
-        <span className="text-sm font-semibold text-terracotta-800">+ {soulte} €</span>
+        <span className={`text-sm font-semibold ${style.texte}`}>+ {euros(soulte)}</span>
       ) : null}
     </div>
   );

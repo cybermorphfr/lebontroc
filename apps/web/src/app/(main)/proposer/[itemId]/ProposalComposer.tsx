@@ -8,6 +8,7 @@ import { MessageSuggestions } from "@/components/MessageSuggestions";
 import { Segmented } from "@/components/ui/Segmented";
 import { Textarea } from "@/components/ui/Textarea";
 import { apiFetch, apiError } from "@/lib/client-api";
+import { ECHANGE, euros } from "@/lib/format";
 import { suggestionsProposition } from "@/lib/suggestions";
 
 /** Le composeur « ça contre ça » — l'écran signature de Lebontroc. */
@@ -195,15 +196,19 @@ export function ProposalComposer({
         <div className="grid grid-cols-2 gap-3 text-sm">
           <RecapColumn
             title="Tu donnes"
+            ton="donne"
             items={mine.filter((i) => offered.has(i.id))}
             extra={cashDirection === "du_proposant" && cashEuros > 0 ? `+ ${cashEuros} €` : null}
+            extraCents={cashDirection === "du_proposant" ? cashEuros * 100 : 0}
           />
           <RecapColumn
             title="Tu reçois"
+            ton="recoit"
             items={theirs.filter((i) => requested.has(i.id))}
             extra={
               cashDirection === "du_destinataire" && cashEuros > 0 ? `+ ${cashEuros} €` : null
             }
+            extraCents={cashDirection === "du_destinataire" ? cashEuros * 100 : 0}
           />
         </div>
         {ready ? (
@@ -327,22 +332,32 @@ function RecapColumn({
   title,
   items,
   extra,
+  extraCents = 0,
+  ton,
 }: {
   title: string;
   items: ItemResponse[];
   extra: string | null;
+  /// Soulte en centimes, pour le total.
+  extraCents?: number;
+  /// Convention de toute l'application : ce qui part / ce qui arrive.
+  ton: "donne" | "recoit";
 }) {
+  const style = ECHANGE[ton];
+  const total = items.reduce((somme, item) => somme + item.value_cents, 0) + extraCents;
   return (
-    <div className="flex flex-col gap-1">
-      <span className="text-xs font-semibold text-neutre-700">{title}</span>
+    <div className={`flex flex-col gap-1 rounded-2xl p-3 ${style.fond}`}>
+      <span className={`text-xs font-semibold ${style.texte}`}>{title}</span>
       {items.length === 0 ? <span className="text-neutre-700">—</span> : null}
       {items.map((item) => (
         <span key={item.id} className="truncate">
-          {item.title}{" "}
-          <span className="text-neutre-700">~{Math.round(item.value_cents / 100)} €</span>
+          {item.title} <span className="text-neutre-700">~{euros(item.value_cents)}</span>
         </span>
       ))}
-      {extra ? <span className="font-semibold text-terracotta-700">{extra}</span> : null}
+      {extra ? <span className={`font-semibold ${style.texte}`}>{extra}</span> : null}
+      <span className={`mt-1 border-t border-encre/10 pt-1 text-sm font-semibold ${style.texte}`}>
+        Total ~{euros(total)}
+      </span>
     </div>
   );
 }

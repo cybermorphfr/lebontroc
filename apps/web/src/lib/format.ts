@@ -51,3 +51,28 @@ export function timeAgo(iso: string): string {
   if (days < 30) return `il y a ${days} j`;
   return `il y a ${Math.floor(days / 30)} mois`;
 }
+
+/**
+ * Convention visuelle des échanges, valable dans toute l'application :
+ * ce qui SORT de chez toi est terracotta (chaud), ce qui ARRIVE est sauge
+ * (vert). Une seule lecture à apprendre, partout.
+ */
+export const ECHANGE = {
+  donne: {
+    fond: "bg-terracotta-100",
+    texte: "text-terracotta-800",
+    bordure: "border-terracotta-500",
+    libelle: "Tu donnes",
+  },
+  recoit: {
+    fond: "bg-sauge-100",
+    texte: "text-sauge-800",
+    bordure: "border-sauge-500",
+    libelle: "Tu reçois",
+  },
+} as const;
+
+/** Montant en euros, arrondi — les valeurs sont indicatives. */
+export function euros(cents: number): string {
+  return `${Math.round(cents / 100)} €`;
+}

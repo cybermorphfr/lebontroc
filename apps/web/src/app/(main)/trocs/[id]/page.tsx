@@ -6,7 +6,7 @@ import { createApiClient, type ProposalItemResponse } from "@lebontroc/api-clien
 
 import { Tag } from "@/components/ui/Tag";
 import { getCurrentUser } from "@/lib/server-api";
-import { STATUS_PROPOSITION } from "@/lib/format";
+import { ECHANGE, euros, STATUS_PROPOSITION } from "@/lib/format";
 
 import { AcceptButton } from "./AcceptButton";
 import { DisputePanel } from "./DisputePanel";
@@ -97,14 +97,16 @@ export default async function TrocDetailPage({
 
       <div className="grid gap-4 sm:grid-cols-2">
         <RecapCard
-          title={proposal.is_proposer ? "Tu donnes" : `${proposal.proposer_pseudo} donne`}
+          title={proposal.is_proposer ? "Tu donnes" : `${proposal.proposer_pseudo} propose`}
           items={proposal.offered}
           cash={proposal.cash_direction === "du_proposant" ? proposal.cash_cents : 0}
+          ton={proposal.is_proposer ? "donne" : "recoit"}
         />
         <RecapCard
           title={proposal.is_proposer ? "Tu reçois" : "Tu donnes"}
           items={proposal.requested}
           cash={proposal.cash_direction === "du_destinataire" ? proposal.cash_cents : 0}
+          ton={proposal.is_proposer ? "recoit" : "donne"}
         />
       </div>
 
@@ -185,19 +187,6 @@ export default async function TrocDetailPage({
         </p>
       ) : null}
 
-      {!proposal.is_proposer && ouverte ? (
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          <AcceptButton proposalId={proposal.id} />
-          <Link
-            href={`/trocs/${proposal.id}/contre`}
-            className="flex min-h-11 items-center justify-center rounded-full border border-neutre-300 px-6 text-sm text-encre transition-colors hover:bg-encre/7"
-          >
-            Contre-proposer
-          </Link>
-          <RefuseButton proposalId={proposal.id} />
-        </div>
-      ) : null}
-
       <div className="mt-6">
         <Conversation
           proposalId={proposal.id}
@@ -208,6 +197,20 @@ export default async function TrocDetailPage({
           initialMessages={messages ?? []}
           chain={chain ?? []}
           closed={!ouverte && proposal.status !== "acceptee"}
+          actions={
+            !proposal.is_proposer && ouverte ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <AcceptButton proposalId={proposal.id} />
+                <Link
+                  href={`/trocs/${proposal.id}/contre`}
+                  className="flex min-h-11 items-center justify-center rounded-full border border-neutre-300 px-5 text-sm text-encre transition-colors hover:bg-encre/7"
+                >
+                  Contre-proposer
+                </Link>
+                <RefuseButton proposalId={proposal.id} />
+              </div>
+            ) : null
+          }
           contexte={{
             proposalStatus: proposal.status,
             tradeStatus: trade?.status ?? null,
@@ -230,14 +233,19 @@ function RecapCard({
   title,
   items,
   cash,
+  ton,
 }: {
   title: string;
   items: ProposalItemResponse[];
   cash: number;
+  /// Convention de toute l'application : ce qui part / ce qui arrive.
+  ton: "donne" | "recoit";
 }) {
+  const style = ECHANGE[ton];
+  const total = items.reduce((somme, item) => somme + item.value_cents, 0) + cash;
   return (
-    <section className="flex flex-col gap-3 rounded-[32px] bg-sable p-5 shadow-sm">
-      <h2 className="font-display text-lg">{title}</h2>
+    <section className={`flex flex-col gap-3 rounded-[32px] p-5 shadow-sm ${style.fond}`}>
+      <h2 className={`font-display text-lg ${style.texte}`}>{title}</h2>
       <ul className="flex flex-col gap-2">
         {items.map((item) => (
           <li key={item.item_id} className="flex items-center gap-3">
@@ -261,11 +269,12 @@ function RecapCard({
           </li>
         ))}
         {cash > 0 ? (
-          <li className="font-display text-sm text-terracotta-700">
-            + {Math.round(cash / 100)} € de soulte
-          </li>
+          <li className={`font-display text-sm ${style.texte}`}>+ {euros(cash)} de soulte</li>
         ) : null}
       </ul>
+      <p className={`border-t border-encre/10 pt-2 text-sm font-semibold ${style.texte}`}>
+        Total estimé ~{euros(total)}
+      </p>
     </section>
   );
 }
