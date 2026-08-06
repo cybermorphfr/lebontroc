@@ -157,6 +157,7 @@ fn spawn_proposal_expiry(state: AppState) {
             if count > 0 {
                 tracing::info!(count, "relances de messages non lus envoyées");
             }
+            api::admin::handlers::check_alerts(&state).await;
             let report = api::trade::handlers::maintain_trades(&state).await;
             if report != Default::default() {
                 tracing::info!(

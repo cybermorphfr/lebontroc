@@ -73,6 +73,7 @@ pub fn router() -> Router<AppState> {
         )
         .route("/admin/audit", get(handlers::admin_list_audit))
         .route("/admin/kpis", get(handlers::admin_kpis))
+        .route("/admin/dashboard", get(handlers::admin_dashboard))
         .route("/admin/staff", get(handlers::admin_list_staff))
         .route("/admin/users/{pseudo}/role", post(handlers::admin_set_role))
         .layer(middleware::from_fn_with_state(debit, limiter))

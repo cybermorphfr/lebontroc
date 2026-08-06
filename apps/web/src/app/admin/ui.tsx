@@ -68,3 +68,61 @@ export function Statistique({ valeur, libelle }: { valeur: string | number; libe
     </div>
   );
 }
+
+/** Mini-courbe SVG des 30 derniers jours — rendue côté serveur, zéro lib. */
+export function Sparkline({ valeurs, libelle }: { valeurs: number[]; libelle: string }) {
+  const largeur = 120;
+  const hauteur = 32;
+  const max = Math.max(...valeurs, 1);
+  const pas = valeurs.length > 1 ? largeur / (valeurs.length - 1) : largeur;
+  const points = valeurs
+    .map((v, i) => `${(i * pas).toFixed(1)},${(hauteur - (v / max) * (hauteur - 4) - 2).toFixed(1)}`)
+    .join(" ");
+  const total = valeurs.reduce((a, b) => a + b, 0);
+  return (
+    <div className="flex flex-col items-center gap-1 rounded-3xl bg-creme px-4 py-3">
+      <span className="font-display text-xl text-terracotta-800">{total}</span>
+      <svg
+        viewBox={`0 0 ${largeur} ${hauteur}`}
+        className="h-8 w-full max-w-[120px]"
+        aria-hidden="true"
+      >
+        <polyline
+          points={points}
+          fill="none"
+          stroke="#c67139"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+      <span className="text-center text-[11px] text-neutre-700">{libelle}</span>
+    </div>
+  );
+}
+
+/** Variation hebdomadaire : flèche + pourcentage, colorée selon le sens.
+ * `inverse` pour les métriques où la hausse est une mauvaise nouvelle
+ * (litiges, échecs). */
+export function Variation({
+  actuel,
+  precedent,
+  inverse = false,
+}: {
+  actuel: number;
+  precedent: number;
+  inverse?: boolean;
+}) {
+  if (precedent === 0) {
+    return <Pastille ton="neutre">{actuel > 0 ? "nouveau" : "—"}</Pastille>;
+  }
+  const pct = Math.round(((actuel - precedent) / precedent) * 100);
+  if (pct === 0) return <Pastille ton="neutre">stable</Pastille>;
+  const bonne = inverse ? pct < 0 : pct > 0;
+  return (
+    <Pastille ton={bonne ? "ok" : "attente"}>
+      {pct > 0 ? "↗" : "↘"} {pct > 0 ? "+" : ""}
+      {pct} %
+    </Pastille>
+  );
+}

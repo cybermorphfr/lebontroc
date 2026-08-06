@@ -34,6 +34,27 @@
         }
       }
     },
+    "/admin/dashboard": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Le tableau de bord complet — chaque nombre sort des données réelles.",
+        "operationId": "admin_dashboard",
+        "responses": {
+          "200": {
+            "description": "Toutes les métriques",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/disputes": {
       "get": {
         "tags": [
@@ -4104,6 +4125,392 @@
               "format": "uuid"
             },
             "description": "Ses objets (1 à 10), tous au même troqueur."
+          }
+        }
+      },
+      "DashboardActivite": {
+        "type": "object",
+        "required": [
+          "inscrits_total",
+          "comptes_supprimes",
+          "comptes_bannis",
+          "comptes_restreints",
+          "dau",
+          "wau",
+          "mau",
+          "recherches_7j",
+          "messages_7j",
+          "favoris_total",
+          "notifications_ouvertes_7j"
+        ],
+        "properties": {
+          "comptes_bannis": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "comptes_restreints": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "comptes_supprimes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "dau": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "favoris_total": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "inscrits_total": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "mau": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "messages_7j": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "notifications_ouvertes_7j": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "recherches_7j": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "wau": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "DashboardFinances": {
+        "type": "object",
+        "required": [
+          "soultes_capturees_cents",
+          "soultes_sequestrees_cents",
+          "frais_service_percus_cents",
+          "transport_encaisse_cents",
+          "commissions_cents",
+          "paiements_echoues",
+          "colis_expedies",
+          "trocs_envoi_litigieux"
+        ],
+        "properties": {
+          "colis_expedies": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "commissions_cents": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "frais_service_percus_cents": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "jours_moyens_finalisation": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "paiements_echoues": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "soultes_capturees_cents": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "soultes_sequestrees_cents": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "transport_encaisse_cents": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "trocs_envoi_litigieux": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "DashboardMarketplace": {
+        "type": "object",
+        "required": [
+          "annonces_actives",
+          "annonces_reservees",
+          "annonces_troquees",
+          "propositions_total",
+          "contre_propositions",
+          "taux_acceptation_pct",
+          "valeur_echangee_cents"
+        ],
+        "properties": {
+          "annonces_actives": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "annonces_reservees": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "annonces_troquees": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "contre_propositions": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "heures_avant_premier_message": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "heures_moyennes_avant_accord": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "propositions_total": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "taux_acceptation_pct": {
+            "type": "number",
+            "format": "double"
+          },
+          "valeur_echangee_cents": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "DashboardPoint": {
+        "type": "object",
+        "required": [
+          "jour",
+          "inscriptions",
+          "annonces",
+          "propositions",
+          "trocs_finalises",
+          "volume_soulte_cents"
+        ],
+        "properties": {
+          "annonces": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "inscriptions": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "jour": {
+            "type": "string"
+          },
+          "propositions": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "trocs_finalises": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "volume_soulte_cents": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "DashboardQualite": {
+        "type": "object",
+        "required": [
+          "litiges_ouverts",
+          "litiges_en_examen",
+          "litiges_tranches",
+          "signalements_en_attente"
+        ],
+        "properties": {
+          "heures_moyennes_resolution": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "litiges_en_examen": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "litiges_ouverts": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "litiges_tranches": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "note_moyenne": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "signalements_en_attente": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "DashboardResponse": {
+        "type": "object",
+        "required": [
+          "series",
+          "activite",
+          "marketplace",
+          "top_categories",
+          "top_communes",
+          "qualite",
+          "finances_beta",
+          "systeme",
+          "tendance"
+        ],
+        "properties": {
+          "activite": {
+            "$ref": "#/components/schemas/DashboardActivite"
+          },
+          "finances_beta": {
+            "$ref": "#/components/schemas/DashboardFinances",
+            "description": "Paiements SIMULÉS en bêta : des ordres de grandeur, pas de la\ntrésorerie."
+          },
+          "marketplace": {
+            "$ref": "#/components/schemas/DashboardMarketplace"
+          },
+          "qualite": {
+            "$ref": "#/components/schemas/DashboardQualite"
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DashboardPoint"
+            },
+            "description": "Séries quotidiennes des 30 derniers jours."
+          },
+          "systeme": {
+            "$ref": "#/components/schemas/DashboardSysteme"
+          },
+          "tendance": {
+            "$ref": "#/components/schemas/DashboardTendance"
+          },
+          "top_categories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DashboardTop"
+            }
+          },
+          "top_communes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DashboardTop"
+            }
+          }
+        }
+      },
+      "DashboardSysteme": {
+        "type": "object",
+        "required": [
+          "version",
+          "taille_base",
+          "evenements_telemetrie",
+          "evenements_non_exportes",
+          "notifications_stockees",
+          "sessions_actives"
+        ],
+        "properties": {
+          "evenements_non_exportes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "evenements_telemetrie": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "notifications_stockees": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sessions_actives": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "taille_base": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "DashboardTendance": {
+        "type": "object",
+        "required": [
+          "litiges_7j",
+          "litiges_7j_precedents",
+          "trocs_7j",
+          "trocs_7j_precedents",
+          "echecs_paiement_7j"
+        ],
+        "properties": {
+          "echecs_paiement_7j": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "litiges_7j": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "litiges_7j_precedents": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "trocs_7j": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "trocs_7j_precedents": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "DashboardTop": {
+        "type": "object",
+        "required": [
+          "libelle",
+          "total"
+        ],
+        "properties": {
+          "libelle": {
+            "type": "string"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
