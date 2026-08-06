@@ -23,6 +23,7 @@ export type SearchResponse = components["schemas"]["SearchResponse"];
 export type WishlistEntry = components["schemas"]["WishlistEntryDto"];
 export type ProposalResponse = components["schemas"]["ProposalResponse"];
 export type ProposalItemResponse = components["schemas"]["ProposalItemResponse"];
+export type ProposalChainEntry = components["schemas"]["ProposalChainEntry"];
 export type MessageResponse = components["schemas"]["MessageResponse"];
 export type ConversationResponse = components["schemas"]["ConversationResponse"];
 export type TradeDetailResponse = components["schemas"]["TradeDetailResponse"];

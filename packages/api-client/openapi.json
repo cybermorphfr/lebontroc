@@ -1849,6 +1849,52 @@
         }
       }
     },
+    "/proposals/{id}/chain": {
+      "get": {
+        "tags": [
+          "trade"
+        ],
+        "summary": "Toute la négociation d'un échange : proposition initiale et\ncontre-propositions successives, du plus ancien au plus récent. Le fil\nde conversation les affiche entre les messages — un seul endroit pour\nnégocier.",
+        "operationId": "proposal_chain",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "N'importe quel maillon de la chaîne",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "La négociation, dans l'ordre",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProposalChainEntry"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/proposals/{id}/counter": {
       "post": {
         "tags": [
@@ -4483,6 +4529,69 @@
           "upload_url": {
             "type": "string",
             "description": "URL de PUT direct vers le stockage (valable 15 min)."
+          }
+        }
+      },
+      "ProposalChainEntry": {
+        "type": "object",
+        "description": "Un maillon de la négociation : proposition initiale ou\ncontre-proposition, tel qu'affiché dans le fil (F-UX « un seul\nendroit pour négocier »).",
+        "required": [
+          "id",
+          "is_mine",
+          "author_pseudo",
+          "status",
+          "cash_cents",
+          "cash_direction",
+          "created_at",
+          "offered",
+          "requested"
+        ],
+        "properties": {
+          "author_pseudo": {
+            "type": "string"
+          },
+          "cash_cents": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "cash_direction": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "is_mine": {
+            "type": "boolean",
+            "description": "Le lecteur est-il l'auteur de ce maillon ?"
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "offered": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProposalItemResponse"
+            },
+            "description": "Ce que l'auteur du maillon donne."
+          },
+          "requested": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProposalItemResponse"
+            },
+            "description": "Ce que l'auteur du maillon demande."
+          },
+          "status": {
+            "type": "string",
+            "description": "`envoyee`, `vue`, `acceptee`, `refusee`, `contre_proposee`,\n`expiree` ou `caduque`."
           }
         }
       },

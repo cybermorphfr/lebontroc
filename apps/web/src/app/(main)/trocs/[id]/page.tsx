@@ -39,9 +39,10 @@ export default async function TrocDetailPage({
       .map((c) => `${c.name}=${c.value}`)
       .join("; "),
   });
-  const [{ data: proposal }, { data: messages }] = await Promise.all([
+  const [{ data: proposal }, { data: messages }, { data: chain }] = await Promise.all([
     client.GET("/proposals/{id}", { params: { path: { id } }, cache: "no-store" }),
     client.GET("/proposals/{id}/messages", { params: { path: { id } }, cache: "no-store" }),
+    client.GET("/proposals/{id}/chain", { params: { path: { id } }, cache: "no-store" }),
   ]);
   const { data: trade } = proposal?.trade
     ? await client.GET("/trades/{id}", {
@@ -205,6 +206,7 @@ export default async function TrocDetailPage({
             proposal.is_proposer ? proposal.recipient_pseudo : proposal.proposer_pseudo
           }
           initialMessages={messages ?? []}
+          chain={chain ?? []}
           closed={!ouverte && proposal.status !== "acceptee"}
           contexte={{
             proposalStatus: proposal.status,

@@ -192,6 +192,28 @@ pub struct TradeReviews {
     pub received: Option<ReviewInfo>,
 }
 
+/// Un maillon de la négociation : proposition initiale ou
+/// contre-proposition, tel qu'affiché dans le fil (F-UX « un seul
+/// endroit pour négocier »).
+#[derive(Serialize, ToSchema)]
+pub struct ProposalChainEntry {
+    pub id: Uuid,
+    /// Le lecteur est-il l'auteur de ce maillon ?
+    pub is_mine: bool,
+    pub author_pseudo: String,
+    /// `envoyee`, `vue`, `acceptee`, `refusee`, `contre_proposee`,
+    /// `expiree` ou `caduque`.
+    pub status: String,
+    pub cash_cents: i32,
+    pub cash_direction: String,
+    pub message: Option<String>,
+    pub created_at: DateTime<Utc>,
+    /// Ce que l'auteur du maillon donne.
+    pub offered: Vec<ProposalItemResponse>,
+    /// Ce que l'auteur du maillon demande.
+    pub requested: Vec<ProposalItemResponse>,
+}
+
 #[derive(Deserialize, ToSchema)]
 pub struct AcceptProposalRequest {
     /// `main_propre` ou `envoi`.

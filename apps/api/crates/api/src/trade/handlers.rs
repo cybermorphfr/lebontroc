@@ -21,7 +21,7 @@ use crate::telemetry;
 use crate::trade::dto::{
     AcceptProposalRequest, ConfigureShippingRequest, ConfirmTradeRequest, CreateProposalRequest,
     PayTradeRequest, PaymentInfo, ProposalItemResponse, ProposalResponse, RelayResponse,
-    ReviewInfo, ReviewReplyRequest, ShipmentInfo, SubmitReviewRequest, TradeDetailResponse,
+    ProposalChainEntry, ReviewInfo, ReviewReplyRequest, ShipmentInfo, SubmitReviewRequest, TradeDetailResponse,
     TradeResponse, TradeReviews,
 };
 use crate::AppState;
@@ -2703,4 +2703,77 @@ pub async fn reply_review(
         ));
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Toute la négociation d'un échange : proposition initiale et
+/// contre-propositions successives, du plus ancien au plus récent. Le fil
+/// de conversation les affiche entre les messages — un seul endroit pour
+/// négocier.
+#[utoipa::path(
+    get,
+    path = "/proposals/{id}/chain",
+    tag = "trade",
+    params(("id" = Uuid, Path, description = "N'importe quel maillon de la chaîne")),
+    responses(
+        (status = 200, description = "La négociation, dans l'ordre", body = [ProposalChainEntry]),
+        (status = 404, description = "Introuvable", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn proposal_chain(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<ProposalChainEntry>>, ApiError> {
+    // Contrôle d'accès : le lecteur doit participer à l'échange.
+    infra::trade_repo::get_proposal(&state.pool, id)
+        .await?
+        .filter(|p| p.proposer_id == user.user_id || p.recipient_id == user.user_id)
+        .ok_or_else(|| ApiError::not_found("Cette proposition n'existe pas."))?;
+
+    let chaine = infra::trade_repo::proposal_chain(&state.pool, id).await?;
+    let ids: Vec<Uuid> = chaine.iter().map(|p| p.id).collect();
+    let mut items_par_proposition: HashMap<Uuid, Vec<infra::trade_repo::ProposalItem>> =
+        HashMap::new();
+    for item in infra::trade_repo::proposal_items(&state.pool, &ids).await? {
+        items_par_proposition
+            .entry(item.proposal_id)
+            .or_default()
+            .push(item);
+    }
+
+    Ok(Json(
+        chaine
+            .into_iter()
+            .map(|proposition| {
+                let items = items_par_proposition
+                    .remove(&proposition.id)
+                    .unwrap_or_default();
+                let (offered, requested): (Vec<_>, Vec<_>) =
+                    items.into_iter().partition(|i| i.side == "offert");
+                let to_response = |items: Vec<infra::trade_repo::ProposalItem>| {
+                    items
+                        .into_iter()
+                        .map(|i| ProposalItemResponse {
+                            item_id: i.item_id,
+                            title: i.title,
+                            value_cents: i.value_cents_snapshot,
+                            photo_url: i.s3_key.as_deref().map(|k| state.photos.public_url(k)),
+                        })
+                        .collect()
+                };
+                ProposalChainEntry {
+                    is_mine: proposition.proposer_id == user.user_id,
+                    author_pseudo: proposition.proposer_pseudo,
+                    id: proposition.id,
+                    status: proposition.status,
+                    cash_cents: proposition.cash_cents,
+                    cash_direction: proposition.cash_direction,
+                    message: proposition.message,
+                    created_at: proposition.created_at,
+                    offered: to_response(offered),
+                    requested: to_response(requested),
+                }
+            })
+            .collect(),
+    ))
 }

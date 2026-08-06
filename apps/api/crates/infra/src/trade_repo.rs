@@ -130,6 +130,35 @@ pub async fn list_user_proposals(pool: &PgPool, user_id: Uuid) -> sqlx::Result<V
     .await
 }
 
+/// Toute la chaîne de négociation d'un échange, de la première offre à
+/// la dernière contre-proposition, dans l'ordre chronologique. On remonte
+/// jusqu'à la racine par `counter_of`, puis on redescend : depuis
+/// n'importe quel maillon, on obtient l'historique complet.
+pub async fn proposal_chain(pool: &PgPool, id: Uuid) -> sqlx::Result<Vec<Proposal>> {
+    sqlx::query_as::<_, Proposal>(&format!(
+        "WITH RECURSIVE remontee AS ( \
+             SELECT id, counter_of FROM proposals WHERE id = $1 \
+             UNION ALL \
+             SELECT parent.id, parent.counter_of \
+             FROM proposals parent JOIN remontee r ON r.counter_of = parent.id \
+         ), racine AS ( \
+             SELECT id FROM remontee WHERE counter_of IS NULL LIMIT 1 \
+         ), descente AS ( \
+             SELECT id FROM racine \
+             UNION ALL \
+             SELECT enfant.id FROM proposals enfant JOIN descente d ON enfant.counter_of = d.id \
+         ) \
+         SELECT {PROPOSAL_COLUMNS} FROM proposals p \
+         JOIN users up ON up.id = p.proposer_id \
+         JOIN users ur ON ur.id = p.recipient_id \
+         WHERE p.id IN (SELECT id FROM descente) \
+         ORDER BY p.created_at"
+    ))
+    .bind(id)
+    .fetch_all(pool)
+    .await
+}
+
 /// Les objets (avec titre et photo de couverture) d'un lot de propositions.
 pub async fn proposal_items(
     pool: &PgPool,
