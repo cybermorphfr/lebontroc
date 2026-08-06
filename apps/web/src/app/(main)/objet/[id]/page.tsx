@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { createApiClient, type ItemDetailResponse } from "@lebontroc/api-client";
 
 import { AvatarLetter } from "@/components/AvatarLetter";
+import { ReportButton } from "@/components/ReportButton";
 import { Tag } from "@/components/ui/Tag";
 import { ancrage, CONDITION_LABELS, DELIVERY_LABELS, distanceLabel } from "@/lib/format";
 import { getCurrentUser } from "@/lib/server-api";
@@ -173,6 +174,10 @@ export default async function ObjetPage({
               Proposer un troc
             </Link>
           )}
+
+          {viewer && !is_owner ? (
+            <ReportButton cible="objet" targetId={item.id} libelle="Signaler cette annonce" />
+          ) : null}
         </div>
       </div>
     </main>

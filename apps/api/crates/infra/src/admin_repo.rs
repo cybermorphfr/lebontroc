@@ -61,6 +61,11 @@ pub struct ReportRow {
     pub reporter_pseudo: String,
     pub target_type: String,
     pub target_id: Uuid,
+    /// Ce qui a été signalé, en clair : titre de l'annonce ou extrait du
+    /// message. `None` quand la cible est un profil (c'est `target_pseudo`).
+    pub target_label: Option<String>,
+    /// Le pseudo du membre visé — directement, ou via l'objet/le message.
+    pub target_pseudo: Option<String>,
     pub reason: String,
     pub comment: Option<String>,
     pub status: String,
@@ -71,6 +76,20 @@ pub struct ReportRow {
 pub async fn list_reports(pool: &PgPool, status: Option<&str>) -> sqlx::Result<Vec<ReportRow>> {
     sqlx::query_as::<_, ReportRow>(
         "SELECT r.id, u.pseudo::text AS reporter_pseudo, r.target_type, r.target_id, \
+                CASE WHEN r.target_type = 'objet' \
+                     THEN (SELECT title FROM items WHERE id = r.target_id) \
+                     WHEN r.target_type = 'message' \
+                     THEN (SELECT left(body, 120) FROM messages WHERE id = r.target_id) \
+                END AS target_label, \
+                CASE WHEN r.target_type = 'utilisateur' \
+                     THEN (SELECT pseudo::text FROM users WHERE id = r.target_id) \
+                     WHEN r.target_type = 'objet' \
+                     THEN (SELECT u2.pseudo::text FROM items i JOIN users u2 ON u2.id = i.owner_id \
+                           WHERE i.id = r.target_id) \
+                     WHEN r.target_type = 'message' \
+                     THEN (SELECT u2.pseudo::text FROM messages m JOIN users u2 ON u2.id = m.sender_id \
+                           WHERE m.id = r.target_id) \
+                END AS target_pseudo, \
                 r.reason, r.comment, r.status, r.outcome, r.created_at \
          FROM reports r JOIN users u ON u.id = r.reporter_id \
          WHERE ($1::text IS NULL OR r.status = $1) \
@@ -93,6 +112,20 @@ pub async fn close_report(
             WHERE id = $1 AND status = 'nouveau' RETURNING * \
          ) \
          SELECT c.id, u.pseudo::text AS reporter_pseudo, c.target_type, c.target_id, \
+                CASE WHEN c.target_type = 'objet' \
+                     THEN (SELECT title FROM items WHERE id = c.target_id) \
+                     WHEN c.target_type = 'message' \
+                     THEN (SELECT left(body, 120) FROM messages WHERE id = c.target_id) \
+                END AS target_label, \
+                CASE WHEN c.target_type = 'utilisateur' \
+                     THEN (SELECT pseudo::text FROM users WHERE id = c.target_id) \
+                     WHEN c.target_type = 'objet' \
+                     THEN (SELECT u2.pseudo::text FROM items i JOIN users u2 ON u2.id = i.owner_id \
+                           WHERE i.id = c.target_id) \
+                     WHEN c.target_type = 'message' \
+                     THEN (SELECT u2.pseudo::text FROM messages m JOIN users u2 ON u2.id = m.sender_id \
+                           WHERE m.id = c.target_id) \
+                END AS target_pseudo, \
                 c.reason, c.comment, c.status, c.outcome, c.created_at \
          FROM closed c JOIN users u ON u.id = c.reporter_id",
     )
