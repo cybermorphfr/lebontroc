@@ -57,14 +57,14 @@ export function suggestionsConversation(contexte: {
       : [
           "Ça m'intéresse !",
           "Il est toujours disponible ?",
-          "Tu peux m'envoyer d'autres photos ?",
-          "Tu accepterais un autre objet à la place ?",
+          "Tu aurais d'autres photos ?",
+          "Et si je te proposais un autre objet ?",
         ];
   }
 
   return [
     "Il est toujours disponible ?",
-    "Tu peux m'envoyer d'autres photos ?",
+    "Tu aurais d'autres photos ?",
     "Ça te va comme échange ?",
     "Merci !",
   ];

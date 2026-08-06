@@ -90,7 +90,7 @@ test("soulte séquestrée : refus simulé, préautorisation, capture à la remis
   // Alice accepte en main propre : le troc attend le paiement de Bob.
   await pageAlice.goto("/trocs");
   await pageAlice.getByRole("link", { name: /objet(s)? contre/ }).click();
-  await pageAlice.getByRole("button", { name: "Accepter" }).click();
+  await pageAlice.getByRole("button", { name: "Accepter", exact: true }).click();
   await pageAlice.getByRole("button", { name: "En main propre" }).click();
   await expect(
     pageAlice.getByRole("heading", { name: /soulte en cours de règlement/ }),

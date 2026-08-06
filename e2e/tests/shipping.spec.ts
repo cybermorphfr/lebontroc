@@ -104,7 +104,7 @@ test("envoi croisé : config, frais, étiquettes, dépôts et double confirmatio
   // Alice accepte PAR ENVOI, configure son colis et paie 6,50 € (S + service).
   await pageAlice.goto("/trocs");
   await pageAlice.getByRole("link", { name: /objet(s)? contre/ }).click();
-  await pageAlice.getByRole("button", { name: "Accepter" }).click();
+  await pageAlice.getByRole("button", { name: "Accepter", exact: true }).click();
   await pageAlice.getByRole("button", { name: "Par envoi (point relais)" }).click();
   await setupAndPay(pageAlice, /Ton règlement est sécurisé/);
 

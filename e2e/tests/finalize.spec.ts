@@ -88,7 +88,7 @@ test("finalisation croisée : codes échangés, troc finalisé, objets troqués"
   // Alice accepte en main propre (l'envoi croisé existe depuis F4.3).
   await pageAlice.goto("/trocs");
   await pageAlice.getByRole("link", { name: /objet(s)? contre/ }).click();
-  await pageAlice.getByRole("button", { name: "Accepter" }).click();
+  await pageAlice.getByRole("button", { name: "Accepter", exact: true }).click();
   await pageAlice.getByRole("button", { name: "En main propre" }).click();
   await expect(pageAlice.getByRole("heading", { name: "Organisez la remise" })).toBeVisible();
 

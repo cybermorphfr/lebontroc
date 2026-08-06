@@ -105,7 +105,7 @@ test("contre-proposition puis acceptation : troc conclu, objets réservés", asy
   // Bob voit la contre-proposition et l'accepte en main propre.
   await page.goto("/trocs");
   await page.getByRole("link", { name: /De acc/ }).click();
-  await page.getByRole("button", { name: "Accepter" }).click();
+  await page.getByRole("button", { name: "Accepter", exact: true }).click();
   await page.getByRole("button", { name: "En main propre" }).click();
   await expect(page.getByText(/Troc conclu/)).toBeVisible();
   await expect(page.getByText("Acceptée")).toBeVisible();
