@@ -162,6 +162,10 @@ pub struct AdminReportDto {
     pub reporter_pseudo: String,
     pub target_type: String,
     pub target_id: Uuid,
+    /// Titre de l'annonce ou extrait du message signalé.
+    pub target_label: Option<String>,
+    /// Pseudo du membre visé — pour ouvrir son dossier en un clic.
+    pub target_pseudo: Option<String>,
     pub reason: String,
     pub comment: Option<String>,
     pub status: String,
@@ -196,6 +200,8 @@ pub async fn admin_list_reports(
                 reporter_pseudo: r.reporter_pseudo,
                 target_type: r.target_type,
                 target_id: r.target_id,
+                target_label: r.target_label,
+                target_pseudo: r.target_pseudo,
                 reason: r.reason,
                 comment: r.comment,
                 status: r.status,

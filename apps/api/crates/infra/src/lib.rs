@@ -1,6 +1,7 @@
 //! Accès aux systèmes externes : PostgreSQL (SQLx), e-mail (SMTP), et plus
 //! tard S3, Mangopay, logistique.
 
+pub mod admin_items_repo;
 pub mod admin_repo;
 pub mod analytics;
 pub mod auth_repo;

@@ -4356,6 +4356,218 @@ async fn admin_signalements_audit_recherche_et_kpis(pool: PgPool) {
     assert_eq!(kpis["items_published"], 1);
 }
 
+/// Modération du catalogue et dossier d'un membre : la file d'annonces,
+/// l'arborescence, le retrait d'une annonce (notifié à son propriétaire)
+/// et l'autocomplétion des pseudos.
+#[sqlx::test(migrations = "../../migrations")]
+async fn moderation_des_annonces_et_dossier_membre(pool: PgPool) {
+    let (app, emails) = app(pool.clone());
+    let alice = verified_user_at(&app, &emails, "mod1@exemple.fr", "malice1", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo à modérer", 15_000).await;
+    let bob = verified_user(&app, &emails, "mod2@exemple.fr", "mbob1").await;
+    let jeu = publish_valued(&app, &bob, "Jeu à modérer", 4_000).await;
+    let proposition = simple_proposal(&app, &bob, &jeu, &velo).await;
+    // Un message dans le fil : c'est ce que la modération doit pouvoir lire.
+    let response = call(
+        &app,
+        request(
+            "POST",
+            &format!("/proposals/{proposition}/messages"),
+            Some(serde_json::json!({"body": "Ton vélo est-il toujours dispo ?"})),
+            Some(&bob),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    // Bob signale l'annonce d'Alice : le back-office doit la voir remonter.
+    let response = call(
+        &app,
+        request(
+            "POST",
+            "/reports",
+            Some(serde_json::json!({
+                "target_type": "objet", "target_id": velo,
+                "reason": "annonce_trompeuse", "comment": "La photo ne correspond pas."
+            })),
+            Some(&bob),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    // La file d'annonces, filtrée sur le propriétaire.
+    let liste = body_json(
+        call(
+            &app,
+            admin_request("GET", "/admin/items?owner=malice1", None),
+        )
+        .await,
+    )
+    .await;
+    let liste = liste.as_array().expect("annonces");
+    assert_eq!(liste.len(), 1);
+    assert_eq!(liste[0]["title"], "Vélo à modérer");
+    assert_eq!(liste[0]["signalements_ouverts"], 1);
+
+    // Le filtre « signalées seulement » ne garde que celle-là.
+    let signalees = body_json(
+        call(
+            &app,
+            admin_request("GET", "/admin/items?signalees=true", None),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(signalees.as_array().expect("signalées").len(), 1);
+
+    // L'arborescence : deux membres, une annonce chacun.
+    let arbre = body_json(
+        call(
+            &app,
+            admin_request("GET", "/admin/items/arborescence", None),
+        )
+        .await,
+    )
+    .await;
+    let arbre = arbre.as_array().expect("arborescence");
+    assert_eq!(arbre.len(), 2);
+    assert_eq!(arbre[0]["pseudo"], "malice1");
+    assert_eq!(arbre[0]["signalees"], 1);
+
+    // Retrait de l'annonce : elle disparaît de la vitrine.
+    let response = call(
+        &app,
+        admin_request(
+            "POST",
+            &format!("/admin/items/{velo}/moderer"),
+            Some(serde_json::json!({"masquer": true, "motif": "Photo trompeuse"})),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let detail = body_json(
+        call(
+            &app,
+            request("GET", &format!("/items/{velo}"), None, Some(&alice)),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(detail["status"], "masque");
+    // Et le public ne la voit plus du tout.
+    let response = call(&app, request("GET", &format!("/items/{velo}"), None, None)).await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    // Alice est prévenue, avec le motif.
+    let notifs =
+        body_json(call(&app, request("GET", "/notifications", None, Some(&alice))).await).await;
+    assert!(notifs["notifications"]
+        .as_array()
+        .expect("notifications")
+        .iter()
+        .any(|n| n["body"]
+            .as_str()
+            .is_some_and(|c| c.contains("Photo trompeuse"))));
+
+    // Et le journal d'audit retient le retrait.
+    let audit = body_json(call(&app, admin_request("GET", "/admin/audit", None)).await).await;
+    assert!(audit
+        .as_array()
+        .expect("audit")
+        .iter()
+        .any(|e| e["action"] == "item_masque"));
+
+    // Remise en ligne.
+    let response = call(
+        &app,
+        admin_request(
+            "POST",
+            &format!("/admin/items/{velo}/moderer"),
+            Some(serde_json::json!({"masquer": false})),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    // Le dossier complet d'Alice.
+    let dossier = body_json(
+        call(
+            &app,
+            admin_request("GET", "/admin/users/malice1/activite", None),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(dossier["profil"]["pseudo"], "malice1");
+    assert_eq!(dossier["compteurs"]["annonces"], 1);
+    assert_eq!(dossier["compteurs"]["propositions_recues"], 1);
+    assert_eq!(dossier["compteurs"]["signalements_recus"], 0);
+    assert_eq!(dossier["annonces"].as_array().expect("annonces").len(), 1);
+    // Le signalement visait son objet : il apparaît côté « reçu ».
+    assert!(dossier["signalements"]
+        .as_array()
+        .expect("signalements")
+        .iter()
+        .any(|s| s["sens"] == "recu" && s["cible"] == "Vélo à modérer"));
+
+    // Autocomplétion : deux lettres suffisent, la casse est ignorée.
+    let suggestions = body_json(
+        call(
+            &app,
+            admin_request("GET", "/admin/users/suggest?q=MAL", None),
+        )
+        .await,
+    )
+    .await;
+    let suggestions = suggestions.as_array().expect("suggestions");
+    assert_eq!(suggestions.len(), 1);
+    assert_eq!(suggestions[0]["pseudo"], "malice1");
+    assert_eq!(suggestions[0]["annonces"], 1);
+
+    // Les conversations du membre : listées, puis lisibles en entier —
+    // et la lecture laisse une trace nominative au journal.
+    let fils = body_json(
+        call(
+            &app,
+            admin_request("GET", "/admin/users/malice1/conversations", None),
+        )
+        .await,
+    )
+    .await;
+    let fils = fils.as_array().expect("conversations");
+    assert_eq!(fils.len(), 1);
+    assert_eq!(fils[0]["autre_pseudo"], "mbob1");
+    assert!(fils[0]["messages"].as_i64().expect("messages") >= 1);
+    let proposal_id = fils[0]["proposal_id"].as_str().expect("id").to_string();
+
+    let fil = body_json(
+        call(
+            &app,
+            admin_request("GET", &format!("/admin/conversations/{proposal_id}"), None),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(fil["proposer_pseudo"], "mbob1");
+    assert_eq!(fil["recipient_pseudo"], "malice1");
+    assert!(!fil["messages"].as_array().expect("messages").is_empty());
+    let audit = body_json(call(&app, admin_request("GET", "/admin/audit", None)).await).await;
+    assert!(audit
+        .as_array()
+        .expect("audit")
+        .iter()
+        .any(|e| e["action"] == "conversation_consultee"));
+
+    // Un membre inconnu : 404 franc, pas une page vide.
+    let response = call(
+        &app,
+        admin_request("GET", "/admin/users/fantome/activite", None),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
 /// Le tableau de bord exécutif : chaque section répond, et les chiffres
 /// visibles collent aux données posées — les requêtes SQL sont validées
 /// à l'exécution, pas seulement à la compilation.

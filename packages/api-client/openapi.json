@@ -34,6 +34,41 @@
         }
       }
     },
+    "/admin/conversations/{proposal_id}": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Le fil complet d'un échange. C'est de la correspondance privée : la\nlecture est réservée aux super-administrateurs ET inscrite au journal\nd'audit — qui a lu quoi, quand. Un modérateur qui fouille sans raison\nlaisse une trace.",
+        "operationId": "admin_conversation",
+        "parameters": [
+          {
+            "name": "proposal_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fil complet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminConversationDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Échange inconnu"
+          }
+        }
+      }
+    },
     "/admin/dashboard": {
       "get": {
         "tags": [
@@ -206,6 +241,142 @@
         }
       }
     },
+    "/admin/items": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "La file des annonces, filtrable. Réservée aux super-administrateurs :\nc'est de la donnée personnelle en volume.",
+        "operationId": "admin_list_items",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Sous-chaîne du titre.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "`disponible`, `reserve`, `troque` ou `masque`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "owner",
+            "in": "query",
+            "description": "Pseudo exact du propriétaire — la branche de l'arborescence.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "signalees",
+            "in": "query",
+            "description": "N'afficher que les annonces à signalement ouvert.",
+            "required": false,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Annonces filtrées",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AdminItemDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/items/arborescence": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "L'arborescence des annonces par membre — l'entrée normale de la\nmodération : on part de qui publie, pas d'une liste plate.",
+        "operationId": "admin_owners_tree",
+        "responses": {
+          "200": {
+            "description": "Annonces groupées par membre",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OwnerBranchDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/items/{id}/moderer": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Masque ou remet en ligne une annonce. Le propriétaire est prévenu :\nune modération silencieuse est une modération contestée.",
+        "operationId": "admin_moderate_item",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Annonce modérée"
+          },
+          "404": {
+            "description": "Annonce absente ou déjà troquée"
+          }
+        }
+      }
+    },
     "/admin/kpis": {
       "get": {
         "tags": [
@@ -360,6 +531,111 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/admin/users/suggest": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Autocomplétion des pseudos : taper trois lettres doit suffire.",
+        "operationId": "admin_suggest_users",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dix pseudos au plus",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/UserSuggestionDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/users/{pseudo}/activite": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Toute l'activité d'un membre en une page : le dossier qu'on ouvre\nquand un signalement tombe.",
+        "operationId": "admin_user_activity",
+        "parameters": [
+          {
+            "name": "pseudo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dossier complet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserActivityResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Membre inconnu"
+          }
+        }
+      }
+    },
+    "/admin/users/{pseudo}/conversations": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "La liste des fils d'un membre. Lister les fils ne révèle qu'un aperçu ;\nlire un fil entier est un acte distinct, tracé (voir plus bas).",
+        "operationId": "admin_user_conversations",
+        "parameters": [
+          {
+            "name": "pseudo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fils de discussion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AdminConversationDto"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Membre inconnu"
           }
         }
       }
@@ -3455,6 +3731,106 @@
           }
         }
       },
+      "AdminConversationDetail": {
+        "type": "object",
+        "required": [
+          "proposal_id",
+          "statut",
+          "proposer_pseudo",
+          "recipient_pseudo",
+          "cash_cents",
+          "cash_direction",
+          "created_at",
+          "messages"
+        ],
+        "properties": {
+          "cash_cents": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "cash_direction": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminMessageDto"
+            }
+          },
+          "objets_demandes": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "objets_offerts": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "proposal_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "proposer_pseudo": {
+            "type": "string"
+          },
+          "recipient_pseudo": {
+            "type": "string"
+          },
+          "statut": {
+            "type": "string"
+          }
+        }
+      },
+      "AdminConversationDto": {
+        "type": "object",
+        "required": [
+          "proposal_id",
+          "autre_pseudo",
+          "statut_proposition",
+          "messages",
+          "signales"
+        ],
+        "properties": {
+          "apercu": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "autre_pseudo": {
+            "type": "string"
+          },
+          "dernier_message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "messages": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "proposal_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "signales": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "statut_proposition": {
+            "type": "string"
+          }
+        }
+      },
       "AdminDisputeDetail": {
         "type": "object",
         "required": [
@@ -3637,21 +4013,106 @@
           "id",
           "title",
           "status",
-          "owner_pseudo"
+          "value_cents",
+          "category",
+          "condition",
+          "owner_pseudo",
+          "owner_banned",
+          "signalements",
+          "signalements_ouverts",
+          "created_at"
         ],
         "properties": {
+          "category": {
+            "type": "string"
+          },
+          "condition": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
           "id": {
             "type": "string",
             "format": "uuid"
           },
+          "owner_banned": {
+            "type": "boolean"
+          },
           "owner_pseudo": {
             "type": "string"
+          },
+          "photo_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "signalements": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "signalements_ouverts": {
+            "type": "integer",
+            "format": "int64"
           },
           "status": {
             "type": "string"
           },
           "title": {
             "type": "string"
+          },
+          "value_cents": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "AdminMessageDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "sender_pseudo",
+          "body",
+          "redacted",
+          "signale",
+          "created_at"
+        ],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "photo_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "read_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "redacted": {
+            "type": "boolean",
+            "description": "Le masquage automatique des coordonnées a mordu sur ce message."
+          },
+          "sender_pseudo": {
+            "type": "string"
+          },
+          "signale": {
+            "type": "boolean"
           }
         }
       },
@@ -3699,6 +4160,20 @@
           "target_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "target_label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Titre de l'annonce ou extrait du message signalé."
+          },
+          "target_pseudo": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pseudo du membre visé — pour ouvrir son dossier en un clic."
           },
           "target_type": {
             "type": "string"
@@ -5011,6 +5486,25 @@
           }
         }
       },
+      "ModerateRequest": {
+        "type": "object",
+        "required": [
+          "masquer"
+        ],
+        "properties": {
+          "masquer": {
+            "type": "boolean",
+            "description": "`true` retire l'annonce de la vitrine, `false` la remet en ligne."
+          },
+          "motif": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Motif porté au journal et communiqué au membre."
+          }
+        }
+      },
       "NotificationListResponse": {
         "type": "object",
         "required": [
@@ -5090,6 +5584,52 @@
           "reason": {
             "type": "string",
             "description": "Motif : non_conforme, abime, manquant, contrefacon, jamais_venu."
+          }
+        }
+      },
+      "OwnerBranchDto": {
+        "type": "object",
+        "required": [
+          "pseudo",
+          "role",
+          "banned",
+          "total",
+          "disponibles",
+          "masquees",
+          "signalees"
+        ],
+        "properties": {
+          "banned": {
+            "type": "boolean"
+          },
+          "derniere_publication": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "disponibles": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "masquees": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "pseudo": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "signalees": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -6334,6 +6874,286 @@
           }
         }
       },
+      "UserActivityResponse": {
+        "type": "object",
+        "required": [
+          "profil",
+          "compteurs",
+          "annonces",
+          "trocs",
+          "signalements",
+          "sanctions",
+          "score"
+        ],
+        "properties": {
+          "annonces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminItemDto"
+            }
+          },
+          "compteurs": {
+            "$ref": "#/components/schemas/UserCountersDto"
+          },
+          "profil": {
+            "$ref": "#/components/schemas/UserProfileDto"
+          },
+          "sanctions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UserSanctionDto"
+            }
+          },
+          "score": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Score de fiabilité (F5.2) : au-delà de 5, sanctions automatiques."
+          },
+          "signalements": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UserReportDto"
+            }
+          },
+          "trocs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UserTradeDto"
+            }
+          }
+        }
+      },
+      "UserCountersDto": {
+        "type": "object",
+        "required": [
+          "annonces",
+          "annonces_masquees",
+          "propositions_envoyees",
+          "propositions_recues",
+          "trocs",
+          "trocs_finalises",
+          "trocs_annules",
+          "messages",
+          "litiges_ouverts_par_lui",
+          "litiges_subis",
+          "signalements_emis",
+          "signalements_recus",
+          "signalements_fondes",
+          "evaluations",
+          "favoris",
+          "blocages_subis"
+        ],
+        "properties": {
+          "annonces": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "annonces_masquees": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "blocages_subis": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "evaluations": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "favoris": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "litiges_ouverts_par_lui": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "litiges_subis": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "messages": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "note_moyenne": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "propositions_envoyees": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "propositions_recues": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "signalements_emis": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "signalements_fondes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "signalements_recus": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "trocs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "trocs_annules": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "trocs_finalises": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "UserProfileDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "pseudo",
+          "email",
+          "postal_code",
+          "role",
+          "is_master",
+          "email_verified",
+          "totp_actif",
+          "created_at"
+        ],
+        "properties": {
+          "banned_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "commune": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deleted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "derniere_activite": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "email": {
+            "type": "string"
+          },
+          "email_verified": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "is_master": {
+            "type": "boolean"
+          },
+          "postal_code": {
+            "type": "string"
+          },
+          "pseudo": {
+            "type": "string"
+          },
+          "restricted_until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "role": {
+            "type": "string"
+          },
+          "totp_actif": {
+            "type": "boolean"
+          }
+        }
+      },
+      "UserReportDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "sens",
+          "target_type",
+          "reason",
+          "status",
+          "created_at"
+        ],
+        "properties": {
+          "autre_pseudo": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cible": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "comment": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "outcome": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "sens": {
+            "type": "string",
+            "description": "`recu` (il est visé) ou `emis` (il a signalé)."
+          },
+          "status": {
+            "type": "string"
+          },
+          "target_type": {
+            "type": "string"
+          }
+        }
+      },
       "UserResponse": {
         "type": "object",
         "required": [
@@ -6363,6 +7183,94 @@
             "type": "string"
           },
           "pseudo": {
+            "type": "string"
+          }
+        }
+      },
+      "UserSanctionDto": {
+        "type": "object",
+        "required": [
+          "event_type",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "details": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "event_type": {
+            "type": "string"
+          }
+        }
+      },
+      "UserSuggestionDto": {
+        "type": "object",
+        "required": [
+          "pseudo",
+          "role",
+          "is_master",
+          "annonces"
+        ],
+        "properties": {
+          "annonces": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "is_master": {
+            "type": "boolean"
+          },
+          "pseudo": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          }
+        }
+      },
+      "UserTradeDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "delivery_mode",
+          "role",
+          "autre_pseudo",
+          "cash_cents",
+          "litige",
+          "created_at"
+        ],
+        "properties": {
+          "autre_pseudo": {
+            "type": "string"
+          },
+          "cash_cents": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "delivery_mode": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "litige": {
+            "type": "boolean"
+          },
+          "role": {
+            "type": "string"
+          },
+          "status": {
             "type": "string"
           }
         }

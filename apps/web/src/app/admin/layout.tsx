@@ -8,9 +8,11 @@ import { adminFetch } from "./adminFetch";
 
 const ONGLETS = [
   ["/admin", "Tableau de bord"],
+  ["/admin/annonces", "Annonces"],
   ["/admin/litiges", "Litiges"],
   ["/admin/signalements", "Signalements"],
   ["/admin/equipe", "Équipe"],
+  ["/admin/liens", "E-mails"],
   ["/admin/audit", "Journal"],
   ["/admin/securite", "Sécurité"],
 ] as const;

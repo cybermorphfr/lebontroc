@@ -1,6 +1,7 @@
 import { revalidatePath } from "next/cache";
 
 import { adminFetch, adminPost } from "../adminFetch";
+import { ChampPseudo } from "./ChampPseudo";
 
 export const dynamic = "force-dynamic";
 
@@ -95,7 +96,7 @@ export default async function AdminEquipePage() {
 
       <form action={changerRole} className="flex flex-wrap items-center gap-2 rounded-[28px] bg-sable p-5 shadow-sm">
         <span className="font-display text-base">Donner un accès :</span>
-        <input name="pseudo" placeholder="pseudo" className="rounded-full border border-neutre-300 bg-creme px-3.5 py-2 text-sm outline-none focus:border-terracotta-500" required />
+        <ChampPseudo />
         <select name="role" defaultValue="admin" className="rounded-full border border-neutre-300 bg-creme px-3 py-2 text-sm outline-none">
           <option value="admin">administrateur</option>
           <option value="super_admin">super-administrateur</option>
