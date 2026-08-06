@@ -91,7 +91,7 @@ test("déconnexion puis reconnexion", async ({ page }) => {
   // Reconnexion.
   await page.goto("/connexion");
   await page.getByLabel("E-mail").fill(email);
-  await page.getByLabel("Mot de passe").fill("un-bon-mot-de-passe");
+  await page.getByLabel("Mot de passe", { exact: true }).fill("un-bon-mot-de-passe");
   await page.getByRole("button", { name: "Me connecter" }).click();
   await expect(page.getByRole("banner").getByText(pseudo)).toBeVisible();
 });
@@ -99,7 +99,7 @@ test("déconnexion puis reconnexion", async ({ page }) => {
 test("identifiants invalides : message générique", async ({ page }) => {
   await page.goto("/connexion");
   await page.getByLabel("E-mail").fill("inconnu@exemple.fr");
-  const champMdp = page.getByLabel("Mot de passe");
+  const champMdp = page.getByLabel("Mot de passe", { exact: true });
   await champMdp.fill("nimporte-quoi");
   // La bascule révèle puis remasque la saisie.
   await expect(champMdp).toHaveAttribute("type", "password");
