@@ -86,7 +86,7 @@ export default async function TrocDetailPage({
             ? `Ta proposition à ${proposal.recipient_pseudo}`
             : `La proposition de ${proposal.proposer_pseudo}`}
         </h1>
-        <Tag variant={statut.variant}>{statut.label}</Tag>
+        <Tag variant={statut.variant} data-testid="statut-proposition">{statut.label}</Tag>
       </div>
 
       {ouverte ? (

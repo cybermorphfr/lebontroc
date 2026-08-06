@@ -232,6 +232,7 @@ export function Conversation({
               <PropositionCard
                 key={element.entree.id}
                 entree={element.entree}
+                otherPseudo={otherPseudo}
                 courante={element.entree.id === proposalId}
               />
             );
@@ -394,48 +395,93 @@ const LIBELLE_STATUT: Record<string, string> = {
   caduque: "Caduque",
 };
 
-/** Une offre dans le fil (pattern des messageries de marketplace). */
+/**
+ * Une offre dans le fil. Lecture toujours identique quel que soit
+ * l'auteur : à GAUCHE ce que l'autre propose, à DROITE ce que je donne en
+ * échange — on ne se demande jamais « dans quel sens lire ».
+ */
 function PropositionCard({
   entree,
+  otherPseudo,
   courante,
 }: {
   entree: ProposalChainEntry;
+  otherPseudo: string;
   courante: boolean;
 }) {
-  const soulte = Math.round(entree.cash_cents / 100);
-  const titres = (items: ProposalChainEntry["offered"]) =>
-    items.map((i) => i.title).join(", ") || "—";
+  // L'auteur « offre » ce qu'il donne : si c'est moi, sa colonne devient
+  // la mienne (droite) et ce qu'il demande vient de l'autre (gauche).
+  const sien = entree.is_mine ? entree.requested : entree.offered;
+  const mien = entree.is_mine ? entree.offered : entree.requested;
+  const soulteEuros = Math.round(entree.cash_cents / 100);
+  // La soulte suit celui qui la verse : le proposant est l'auteur.
+  const soulteAuteur = entree.cash_direction === "du_proposant";
+  const soulteSienne = soulteEuros > 0 && soulteAuteur !== entree.is_mine;
+  const soulteMienne = soulteEuros > 0 && soulteAuteur === entree.is_mine;
+
   return (
-    <div className={`flex flex-col gap-1 ${entree.is_mine ? "items-end" : "items-start"}`}>
-      <p className="w-full text-center text-[11px] text-neutre-700">
-        {timeAgo(entree.created_at)}
-      </p>
+    <div className="flex flex-col gap-1">
+      <p className="text-center text-[11px] text-neutre-700">{timeAgo(entree.created_at)}</p>
       <div
-        className={`max-w-[min(30rem,90%)] rounded-3xl border p-3 text-sm shadow-sm ${
-          courante
-            ? "border-terracotta-500 bg-creme"
-            : "border-neutre-300 bg-creme/60 opacity-80"
+        className={`rounded-3xl border p-3 shadow-sm ${
+          courante ? "border-terracotta-500 bg-creme" : "border-neutre-300 bg-creme/60 opacity-80"
         }`}
       >
-        <p className="mb-1 font-display text-sm">
+        <p className="mb-2 font-display text-sm">
           🔁 {entree.is_mine ? "Ta proposition" : `Proposition de ${entree.author_pseudo}`}
         </p>
-        <p className="text-neutre-700">
-          <span className="font-semibold text-encre">{entree.author_pseudo} donne</span> :{" "}
-          {titres(entree.offered)}
-          {entree.cash_direction === "du_proposant" && soulte > 0 ? ` + ${soulte} €` : ""}
-        </p>
-        <p className="text-neutre-700">
-          <span className="font-semibold text-encre">et reçoit</span> : {titres(entree.requested)}
-          {entree.cash_direction === "du_destinataire" && soulte > 0 ? ` + ${soulte} €` : ""}
-        </p>
+        <div className="flex items-stretch gap-2">
+          <Colonne titre={`${otherPseudo} propose`} items={sien} soulte={soulteSienne ? soulteEuros : 0} />
+          <span aria-hidden className="self-center text-lg text-neutre-700">
+            ↔
+          </span>
+          <Colonne titre="Tu donnes" items={mien} soulte={soulteMienne ? soulteEuros : 0} align="right" />
+        </div>
         {entree.message ? (
-          <p className="mt-1 whitespace-pre-line text-neutre-700">« {entree.message} »</p>
+          <p className="mt-2 whitespace-pre-line text-sm text-neutre-700">« {entree.message} »</p>
         ) : null}
-        <p className="mt-1 text-[11px] text-neutre-700">
+        <p className="mt-2 text-[11px] text-neutre-700">
           {LIBELLE_STATUT[entree.status] ?? entree.status}
         </p>
       </div>
+    </div>
+  );
+}
+
+function Colonne({
+  titre,
+  items,
+  soulte,
+  align = "left",
+}: {
+  titre: string;
+  items: ProposalChainEntry["offered"];
+  soulte: number;
+  align?: "left" | "right";
+}) {
+  return (
+    <div className={`flex min-w-0 flex-1 flex-col gap-1 ${align === "right" ? "items-end text-right" : ""}`}>
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-neutre-700">
+        {titre}
+      </span>
+      <ul className="flex flex-col gap-1">
+        {items.map((item) => (
+          <li
+            key={item.item_id}
+            className={`flex items-center gap-1.5 text-sm ${align === "right" ? "flex-row-reverse text-right" : ""}`}
+          >
+            {item.photo_url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={item.photo_url} alt="" className="size-8 shrink-0 rounded-lg object-cover" />
+            ) : null}
+            <span className="truncate">{item.title}</span>
+          </li>
+        ))}
+        {items.length === 0 ? <li className="text-sm text-neutre-700">—</li> : null}
+      </ul>
+      {soulte > 0 ? (
+        <span className="text-sm font-semibold text-terracotta-800">+ {soulte} €</span>
+      ) : null}
     </div>
   );
 }

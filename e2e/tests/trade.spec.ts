@@ -96,18 +96,18 @@ test("composer, plafond de soulte, vue et refus", async ({
 
   // Envoi → détail « Envoyée » avec le récap.
   await page.getByRole("button", { name: /Envoyer ma proposition/ }).click();
-  await expect(page.getByText("Envoyée")).toBeVisible();
-  await expect(page.getByText(velo)).toBeVisible();
-  await expect(page.getByText(console_)).toBeVisible();
+  await expect(page.getByTestId("statut-proposition")).toHaveText("Envoyée");
+  await expect(page.getByRole("link", { name: velo })).toBeVisible();
+  await expect(page.getByRole("link", { name: console_ })).toBeVisible();
   await expect(page.getByText("+ 30 € de soulte")).toBeVisible();
 
   // Alice ouvre sa boîte : la proposition passe à « Vue », puis elle refuse.
   await pageAlice.goto("/trocs");
   await pageAlice.getByRole("link", { name: /1 objet contre 1/ }).click();
-  await expect(pageAlice.getByText("Vue")).toBeVisible();
+  await expect(pageAlice.getByTestId("statut-proposition")).toHaveText("Vue");
   await pageAlice.getByRole("button", { name: "Refuser la proposition" }).click();
   await pageAlice.getByRole("button", { name: "Oui, je refuse" }).click();
-  await expect(pageAlice.getByText("Refusée")).toBeVisible();
+  await expect(pageAlice.getByTestId("statut-proposition")).toHaveText("Refusée");
   await contexteAlice.close();
 
   // Côté Bob : le refus est visible dans ses envoyées.
