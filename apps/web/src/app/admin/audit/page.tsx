@@ -1,12 +1,12 @@
+import { adminFetch, adminPost } from "../adminFetch";
 export const dynamic = "force-dynamic";
 
 // Journal d'audit immuable (F6.1).
 
-const API = process.env.API_INTERNAL_URL ?? "http://localhost:8080";
-const TOKEN = process.env.ADMIN_TOKEN ?? "";
 
 type Entry = {
   id: number;
+  actor_pseudo: string | null;
   action: string;
   target_type: string;
   target_id: string;
@@ -15,11 +15,7 @@ type Entry = {
 };
 
 export default async function AdminAuditPage() {
-  const response = await fetch(`${API}/admin/audit`, {
-    headers: { "X-Admin-Token": TOKEN },
-    cache: "no-store",
-  });
-  const entries: Entry[] = response.ok ? await response.json() : [];
+  const entries: Entry[] = (await adminFetch<Entry[]>(`/admin/audit`)) ?? [];
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-col gap-2 p-6 font-mono text-sm">
@@ -29,7 +25,8 @@ export default async function AdminAuditPage() {
       </a>
       {entries.map((e) => (
         <p key={e.id}>
-          #{e.id} · {new Date(e.created_at).toLocaleString("fr-FR")} · {e.action} ·{" "}
+          #{e.id} · {new Date(e.created_at).toLocaleString("fr-FR")} ·{" "}
+          {e.actor_pseudo ?? "service"} · {e.action} ·{" "}
           {e.target_type} {e.target_id}
           {e.details ? ` · ${e.details}` : ""}
         </p>

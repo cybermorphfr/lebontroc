@@ -13,7 +13,7 @@ use crate::dispute::dto::{
     ResolveDisputeResponse, RespondDisputeRequest,
 };
 use crate::error::ApiError;
-use crate::extract::{AdminAuth, CurrentUser};
+use crate::extract::{AdminActor, CurrentUser};
 use crate::telemetry;
 use crate::trade::dto::TradeDetailResponse;
 use crate::trade::handlers::{
@@ -617,7 +617,7 @@ pub struct DisputeListQuery {
 )]
 pub async fn admin_list_disputes(
     State(state): State<AppState>,
-    _admin: AdminAuth,
+    _admin: AdminActor,
     Query(query): Query<DisputeListQuery>,
 ) -> Result<Json<Vec<AdminDisputeSummary>>, ApiError> {
     let disputes = infra::dispute_repo::list_disputes(&state.pool, query.status.as_deref()).await?;
@@ -654,7 +654,7 @@ pub async fn admin_list_disputes(
 )]
 pub async fn admin_get_dispute(
     State(state): State<AppState>,
-    _admin: AdminAuth,
+    _admin: AdminActor,
     Path(id): Path<Uuid>,
 ) -> Result<Json<AdminDisputeDetail>, ApiError> {
     let dispute = infra::dispute_repo::dispute_by_id(&state.pool, id)
@@ -746,7 +746,7 @@ pub async fn admin_get_dispute(
 )]
 pub async fn admin_resolve_dispute(
     State(state): State<AppState>,
-    _admin: AdminAuth,
+    admin: AdminActor,
     Path(id): Path<Uuid>,
     Json(body): Json<ResolveDisputeRequest>,
 ) -> Result<Json<ResolveDisputeResponse>, ApiError> {
@@ -884,6 +884,7 @@ pub async fn admin_resolve_dispute(
     );
     crate::admin::handlers::record_admin_action(
         &state,
+        admin.user_id,
         "dispute_resolved",
         "trade",
         &trade.id.to_string(),
@@ -916,15 +917,23 @@ pub async fn admin_resolve_dispute(
 )]
 pub async fn admin_lift_sanctions(
     State(state): State<AppState>,
-    _admin: AdminAuth,
+    admin: AdminActor,
     Path(pseudo): Path<String>,
 ) -> Result<StatusCode, ApiError> {
+    let cible = infra::admin_repo::find_role_target(&state.pool, &pseudo)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Ce troqueur n'existe pas."))?;
+    // Sanctionner ou dé-sanctionner engage la plateforme : super-admin
+    // seulement, et jamais sur le compte maître.
+    domain::admin::peut_sanctionner(&admin.role, cible.is_master)
+        .map_err(crate::admin::handlers::map_admin_error)?;
     let target = infra::auth_repo::find_user_by_pseudo(&state.pool, &pseudo)
         .await?
         .ok_or_else(|| ApiError::not_found("Ce troqueur n'existe pas."))?;
     infra::dispute_repo::lift_sanctions(&state.pool, target.id).await?;
     crate::admin::handlers::record_admin_action(
         &state,
+        admin.user_id,
         "sanctions_lifted",
         "utilisateur",
         &target.id.to_string(),

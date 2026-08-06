@@ -4430,3 +4430,144 @@ async fn rgpd_export_et_suppression_anonymisante(pool: PgPool) {
     .await;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
+
+// ————— Rôles d'administration —————
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn roles_admin_hierarchie_compte_maitre_et_audit(pool: PgPool) {
+    let (app, emails) = app(pool.clone());
+    let patron = verified_user_at(&app, &emails, "r1@exemple.fr", "rpatron", "44300").await;
+    let modo = verified_user(&app, &emails, "r2@exemple.fr", "rmodo").await;
+    let simple = verified_user(&app, &emails, "r3@exemple.fr", "rsimple").await;
+
+    // Un utilisateur ordinaire n'entre pas dans le panneau.
+    let response = call(&app, request("GET", "/admin/reports", None, Some(&simple))).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    // Le compte maître s'installe au démarrage (ici : à la main).
+    assert!(infra::admin_repo::ensure_master(&pool, "r1@exemple.fr")
+        .await
+        .expect("maître"));
+    // Une seule fois : le second appel ne fait rien.
+    assert!(!infra::admin_repo::ensure_master(&pool, "r2@exemple.fr")
+        .await
+        .expect("maître"));
+
+    // Le maître promeut un administrateur.
+    let response = call(
+        &app,
+        request(
+            "POST",
+            "/admin/users/rmodo/role",
+            Some(serde_json::json!({"role": "admin"})),
+            Some(&patron),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    // L'admin traite les signalements mais n'accède ni aux indicateurs,
+    // ni à la recherche globale, ni à la gestion des rôles.
+    assert_eq!(
+        call(&app, request("GET", "/admin/reports", None, Some(&modo)))
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    for route in ["/admin/kpis", "/admin/search?q=r", "/admin/staff"] {
+        let response = call(&app, request("GET", route, None, Some(&modo))).await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{route}");
+    }
+    let response = call(
+        &app,
+        request(
+            "POST",
+            "/admin/users/rsimple/role",
+            Some(serde_json::json!({"role": "admin"})),
+            Some(&modo),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        body_json(response).await["error"]["code"],
+        "super_admin_requis"
+    );
+
+    // Le compte maître est intouchable, même par un super-admin.
+    call(
+        &app,
+        request(
+            "POST",
+            "/admin/users/rmodo/role",
+            Some(serde_json::json!({"role": "super_admin"})),
+            Some(&patron),
+        ),
+    )
+    .await;
+    let response = call(
+        &app,
+        request(
+            "POST",
+            "/admin/users/rpatron/role",
+            Some(serde_json::json!({"role": "utilisateur"})),
+            Some(&modo),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(body_json(response).await["error"]["code"], "compte_maitre");
+
+    // Personne ne modifie son propre rôle.
+    let response = call(
+        &app,
+        request(
+            "POST",
+            "/admin/users/rmodo/role",
+            Some(serde_json::json!({"role": "utilisateur"})),
+            Some(&modo),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(body_json(response).await["error"]["code"], "soi_meme");
+
+    // Retrait de l'accès : la porte se referme aussitôt.
+    let response = call(
+        &app,
+        request(
+            "POST",
+            "/admin/users/rmodo/role",
+            Some(serde_json::json!({"role": "utilisateur"})),
+            Some(&patron),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        call(&app, request("GET", "/admin/reports", None, Some(&modo)))
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+
+    // Chaque changement est journalisé, avec son auteur.
+    let journal =
+        body_json(call(&app, request("GET", "/admin/audit", None, Some(&patron))).await).await;
+    let lignes: Vec<&serde_json::Value> = journal
+        .as_array()
+        .expect("journal")
+        .iter()
+        .filter(|e| e["action"] == "role_changed")
+        .collect();
+    assert_eq!(lignes.len(), 3, "promotion, passage super-admin, retrait");
+    assert_eq!(lignes[0]["actor_pseudo"], "rpatron");
+    assert!(lignes[0]["details"]
+        .as_str()
+        .expect("détails")
+        .contains("super_admin → utilisateur"));
+
+    // La clé de service reste une porte de secours, tracée « service ».
+    let response = call(&app, admin_request("GET", "/admin/kpis", None)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+}

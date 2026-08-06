@@ -9,15 +9,17 @@ use uuid::Uuid;
 
 pub async fn record_audit(
     pool: &PgPool,
+    actor_id: Option<Uuid>,
     action: &str,
     target_type: &str,
     target_id: &str,
     details: Option<&str>,
 ) -> sqlx::Result<()> {
     sqlx::query(
-        "INSERT INTO admin_audit (action, target_type, target_id, details) \
-         VALUES ($1, $2, $3, $4)",
+        "INSERT INTO admin_audit (actor_id, action, target_type, target_id, details) \
+         VALUES ($1, $2, $3, $4, $5)",
     )
+    .bind(actor_id)
     .bind(action)
     .bind(target_type)
     .bind(target_id)
@@ -30,6 +32,9 @@ pub async fn record_audit(
 #[derive(Debug, Clone, FromRow)]
 pub struct AuditEntry {
     pub id: i64,
+    /// Pseudo de l'auteur — « service » quand l'action vient de la clé
+    /// d'exploitation, `None` pour les tâches automatiques.
+    pub actor_pseudo: Option<String>,
     pub action: String,
     pub target_type: String,
     pub target_id: String,
@@ -39,8 +44,10 @@ pub struct AuditEntry {
 
 pub async fn list_audit(pool: &PgPool) -> sqlx::Result<Vec<AuditEntry>> {
     sqlx::query_as::<_, AuditEntry>(
-        "SELECT id, action, target_type, target_id, details, created_at \
-         FROM admin_audit ORDER BY id DESC LIMIT 200",
+        "SELECT a.id, u.pseudo::text AS actor_pseudo, a.action, a.target_type, \
+                a.target_id, a.details, a.created_at \
+         FROM admin_audit a LEFT JOIN users u ON u.id = a.actor_id \
+         ORDER BY a.id DESC LIMIT 200",
     )
     .fetch_all(pool)
     .await
@@ -101,6 +108,8 @@ pub async fn close_report(
 pub struct AdminUserHit {
     pub id: Uuid,
     pub pseudo: String,
+    pub role: String,
+    pub is_master: bool,
     pub email: String,
     pub created_at: DateTime<Utc>,
     pub restricted_until: Option<DateTime<Utc>>,
@@ -127,8 +136,8 @@ pub struct AdminTradeHit {
 
 pub async fn search_users(pool: &PgPool, q: &str) -> sqlx::Result<Vec<AdminUserHit>> {
     sqlx::query_as::<_, AdminUserHit>(
-        "SELECT id, pseudo::text AS pseudo, email::text AS email, created_at, \
-                restricted_until, banned_at \
+        "SELECT id, pseudo::text AS pseudo, role, is_master, email::text AS email, \
+                created_at, restricted_until, banned_at \
          FROM users WHERE pseudo::text ILIKE '%' || $1 || '%' \
             OR email::text ILIKE '%' || $1 || '%' \
          ORDER BY created_at DESC LIMIT 20",
@@ -276,4 +285,73 @@ pub async fn delete_account(pool: &PgPool, user_id: Uuid) -> sqlx::Result<bool> 
         .await?;
     tx.commit().await?;
     Ok(true)
+}
+
+// ————— Rôles d'administration —————
+
+/// Le rôle et le statut « compte maître » d'un utilisateur.
+#[derive(Debug, Clone, FromRow)]
+pub struct RoleInfo {
+    pub role: String,
+    pub is_master: bool,
+}
+
+pub async fn role_of(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Option<RoleInfo>> {
+    sqlx::query_as::<_, RoleInfo>("SELECT role, is_master FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await
+}
+
+/// La cible d'un changement de rôle, avec ce qu'il faut pour décider.
+#[derive(Debug, Clone, FromRow)]
+pub struct RoleTarget {
+    pub id: Uuid,
+    pub pseudo: String,
+    pub role: String,
+    pub is_master: bool,
+}
+
+pub async fn find_role_target(pool: &PgPool, pseudo: &str) -> sqlx::Result<Option<RoleTarget>> {
+    sqlx::query_as::<_, RoleTarget>(
+        "SELECT id, pseudo::text AS pseudo, role, is_master FROM users WHERE pseudo = $1::citext",
+    )
+    .bind(pseudo)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Applique le nouveau rôle — le garde-fou métier est en amont
+/// (`domain::admin::peut_changer_role`).
+pub async fn set_role(pool: &PgPool, user_id: Uuid, role: &str) -> sqlx::Result<()> {
+    sqlx::query("UPDATE users SET role = $2 WHERE id = $1 AND is_master = false")
+        .bind(user_id)
+        .bind(role)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// L'équipe : tous ceux qui ont un accès au panneau.
+pub async fn list_staff(pool: &PgPool) -> sqlx::Result<Vec<RoleTarget>> {
+    sqlx::query_as::<_, RoleTarget>(
+        "SELECT id, pseudo::text AS pseudo, role, is_master FROM users \
+         WHERE role <> 'utilisateur' ORDER BY is_master DESC, role DESC, pseudo",
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Installe le compte maître au démarrage : super-admin, protégé,
+/// unique. Idempotent — sans e-mail configuré, rien ne se passe.
+pub async fn ensure_master(pool: &PgPool, email: &str) -> sqlx::Result<bool> {
+    let updated = sqlx::query(
+        "UPDATE users SET role = 'super_admin', is_master = true \
+         WHERE email = $1::citext AND is_master = false \
+           AND NOT EXISTS (SELECT 1 FROM users WHERE is_master)",
+    )
+    .bind(email)
+    .execute(pool)
+    .await?;
+    Ok(updated.rows_affected() > 0)
 }

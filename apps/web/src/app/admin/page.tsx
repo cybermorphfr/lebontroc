@@ -1,9 +1,8 @@
+import { adminFetch, adminPost } from "./adminFetch";
 export const dynamic = "force-dynamic";
 
 // Hub d'administration (F6.1) — brut, derrière basic auth Traefik + token.
 
-const API = process.env.API_INTERNAL_URL ?? "http://localhost:8080";
-const TOKEN = process.env.ADMIN_TOKEN ?? "";
 
 type Kpis = {
   signups: number;
@@ -19,6 +18,8 @@ type Search = {
   users: {
     id: string;
     pseudo: string;
+    role: string;
+    is_master: boolean;
     email: string;
     score: number;
     restricted_until: string | null;
@@ -34,14 +35,6 @@ type Search = {
   }[];
 };
 
-async function adminGet<T>(path: string): Promise<T | null> {
-  const response = await fetch(`${API}${path}`, {
-    headers: { "X-Admin-Token": TOKEN },
-    cache: "no-store",
-  });
-  return response.ok ? ((await response.json()) as T) : null;
-}
-
 export default async function AdminHub({
   searchParams,
 }: {
@@ -49,8 +42,8 @@ export default async function AdminHub({
 }) {
   const { q } = await searchParams;
   const [kpis, results] = await Promise.all([
-    adminGet<Kpis>("/admin/kpis"),
-    q ? adminGet<Search>(`/admin/search?q=${encodeURIComponent(q)}`) : Promise.resolve(null),
+    adminFetch<Kpis>("/admin/kpis"),
+    q ? adminFetch<Search>(`/admin/search?q=${encodeURIComponent(q)}`) : Promise.resolve(null),
   ]);
 
   return (
@@ -60,6 +53,7 @@ export default async function AdminHub({
         <a href="/admin/litiges">Litiges</a>
         <a href="/admin/signalements">Signalements</a>
         <a href="/admin/audit">Audit</a>
+        <a href="/admin/equipe">Équipe</a>
         <a href="/admin/liens">Mailpit</a>
       </nav>
 
@@ -92,7 +86,8 @@ export default async function AdminHub({
             <h2 className="font-bold">Utilisateurs ({results.users.length})</h2>
             {results.users.map((u) => (
               <p key={u.id}>
-                {u.pseudo} · {u.email} · score {u.score}
+                {u.pseudo} · {u.email} · {u.role}
+                {u.is_master ? " 🔒" : ""} · score {u.score}
                 {u.banned_at ? " · ⛔ BANNI" : u.restricted_until ? " · ⚠️ restreint" : ""} ·{" "}
                 {u.id}
               </p>

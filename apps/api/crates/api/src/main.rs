@@ -50,6 +50,15 @@ async fn main() -> anyhow::Result<()> {
     spawn_proposal_expiry(state.clone());
     spawn_payment_maintenance(state.clone());
     spawn_analytics_jobs(state.clone());
+
+    // Compte maître : super-admin protégé, posé une fois pour toutes.
+    if let Ok(email) = std::env::var("MASTER_ADMIN_EMAIL") {
+        match infra::admin_repo::ensure_master(&state.pool, &email).await {
+            Ok(true) => tracing::info!(email, "compte maître installé"),
+            Ok(false) => {}
+            Err(error) => tracing::error!(%error, "installation du compte maître en échec"),
+        }
+    }
     let app = api::router(state);
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;
@@ -222,6 +231,7 @@ fn spawn_analytics_jobs(state: AppState) {
                         } else {
                             let _ = infra::admin_repo::record_audit(
                                 &state.pool,
+                                None,
                                 "kpi_hebdo",
                                 "system",
                                 "hebdo",

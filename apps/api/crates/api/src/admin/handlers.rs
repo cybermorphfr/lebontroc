@@ -10,20 +10,28 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::error::ApiError;
-use crate::extract::AdminAuth;
+use crate::extract::AdminActor;
 use crate::telemetry;
 use crate::AppState;
 
 /// Journalise une action admin (audit immuable + télémétrie).
 pub async fn record_admin_action(
     state: &AppState,
+    actor_id: Option<Uuid>,
     action: &str,
     target_type: &str,
     target_id: &str,
     details: Option<&str>,
 ) {
-    if let Err(error) =
-        infra::admin_repo::record_audit(&state.pool, action, target_type, target_id, details).await
+    if let Err(error) = infra::admin_repo::record_audit(
+        &state.pool,
+        actor_id,
+        action,
+        target_type,
+        target_id,
+        details,
+    )
+    .await
     {
         tracing::error!(%error, action, "journal d'audit en échec");
     }
@@ -52,6 +60,10 @@ pub struct AdminSearchResponse {
 pub struct AdminUserDto {
     pub id: Uuid,
     pub pseudo: String,
+    /// `utilisateur`, `admin` ou `super_admin`.
+    pub role: String,
+    /// Compte maître : intouchable par les autres administrateurs.
+    pub is_master: bool,
     pub email: String,
     pub created_at: DateTime<Utc>,
     pub restricted_until: Option<DateTime<Utc>>,
@@ -89,9 +101,10 @@ pub struct AdminTradeDto {
 )]
 pub async fn admin_search(
     State(state): State<AppState>,
-    _admin: AdminAuth,
+    admin: AdminActor,
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<AdminSearchResponse>, ApiError> {
+    admin.require_super()?;
     let q = query.q.trim();
     if q.is_empty() {
         return Ok(Json(AdminSearchResponse {
@@ -106,6 +119,8 @@ pub async fn admin_search(
             score: infra::dispute_repo::reliability_score(&state.pool, hit.id).await?,
             id: hit.id,
             pseudo: hit.pseudo,
+            role: hit.role,
+            is_master: hit.is_master,
             email: hit.email,
             created_at: hit.created_at,
             restricted_until: hit.restricted_until,
@@ -169,7 +184,7 @@ pub struct ReportsQuery {
 )]
 pub async fn admin_list_reports(
     State(state): State<AppState>,
-    _admin: AdminAuth,
+    _admin: AdminActor,
     Query(query): Query<ReportsQuery>,
 ) -> Result<Json<Vec<AdminReportDto>>, ApiError> {
     let reports = infra::admin_repo::list_reports(&state.pool, query.status.as_deref()).await?;
@@ -212,7 +227,7 @@ pub struct CloseReportRequest {
 )]
 pub async fn admin_close_report(
     State(state): State<AppState>,
-    _admin: AdminAuth,
+    admin: AdminActor,
     Path(id): Path<Uuid>,
     Json(body): Json<CloseReportRequest>,
 ) -> Result<axum::http::StatusCode, ApiError> {
@@ -245,6 +260,7 @@ pub async fn admin_close_report(
     }
     record_admin_action(
         &state,
+        admin.user_id,
         "report_closed",
         &report.target_type,
         &report.target_id.to_string(),
@@ -257,6 +273,9 @@ pub async fn admin_close_report(
 #[derive(Serialize, ToSchema)]
 pub struct AuditDto {
     pub id: i64,
+    /// Auteur — « service » pour la clé d'exploitation, vide pour les
+    /// tâches automatiques.
+    pub actor_pseudo: Option<String>,
     pub action: String,
     pub target_type: String,
     pub target_id: String,
@@ -273,7 +292,7 @@ pub struct AuditDto {
 )]
 pub async fn admin_list_audit(
     State(state): State<AppState>,
-    _admin: AdminAuth,
+    _admin: AdminActor,
 ) -> Result<Json<Vec<AuditDto>>, ApiError> {
     let entries = infra::admin_repo::list_audit(&state.pool).await?;
     Ok(Json(
@@ -281,6 +300,7 @@ pub async fn admin_list_audit(
             .into_iter()
             .map(|e| AuditDto {
                 id: e.id,
+                actor_pseudo: e.actor_pseudo,
                 action: e.action,
                 target_type: e.target_type,
                 target_id: e.target_id,
@@ -311,8 +331,9 @@ pub struct KpisDto {
 )]
 pub async fn admin_kpis(
     State(state): State<AppState>,
-    _admin: AdminAuth,
+    admin: AdminActor,
 ) -> Result<Json<KpisDto>, ApiError> {
+    admin.require_super()?;
     let kpis = infra::analytics::weekly_kpis(&state.pool).await?;
     Ok(Json(KpisDto {
         signups: kpis.signups,
@@ -323,4 +344,121 @@ pub async fn admin_kpis(
         trades_with_cash: kpis.trades_with_cash,
         disputes_opened: kpis.disputes_opened,
     }))
+}
+
+// ————— Gestion de l'équipe (super-admin) —————
+
+#[derive(Serialize, ToSchema)]
+pub struct StaffMemberDto {
+    pub id: Uuid,
+    pub pseudo: String,
+    /// `admin` ou `super_admin`.
+    pub role: String,
+    /// Compte maître : ni rétrogradable, ni sanctionnable.
+    pub is_master: bool,
+}
+
+/// Qui a accès au panneau, et à quel niveau.
+#[utoipa::path(
+    get,
+    path = "/admin/staff",
+    tag = "admin",
+    responses((status = 200, description = "L'équipe", body = [StaffMemberDto]))
+)]
+pub async fn admin_list_staff(
+    State(state): State<AppState>,
+    admin: AdminActor,
+) -> Result<Json<Vec<StaffMemberDto>>, ApiError> {
+    admin.require_super()?;
+    Ok(Json(
+        infra::admin_repo::list_staff(&state.pool)
+            .await?
+            .into_iter()
+            .map(|m| StaffMemberDto {
+                id: m.id,
+                pseudo: m.pseudo,
+                role: m.role,
+                is_master: m.is_master,
+            })
+            .collect(),
+    ))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct SetRoleRequest {
+    /// `utilisateur` (retrait de l'accès), `admin` ou `super_admin`.
+    pub role: String,
+}
+
+/// Promouvoir ou rétrograder un compte. Réservé au super-admin ; le compte
+/// maître est intouchable et personne ne modifie son propre rôle. Chaque
+/// changement est journalisé (auteur, cible, ancien rôle, nouveau rôle).
+#[utoipa::path(
+    post,
+    path = "/admin/users/{pseudo}/role",
+    tag = "admin",
+    params(("pseudo" = String, Path, description = "Pseudo de la cible")),
+    request_body = SetRoleRequest,
+    responses(
+        (status = 204, description = "Rôle appliqué"),
+        (status = 403, description = "Niveau insuffisant, compte maître ou soi-même", body = crate::error::ErrorResponse),
+        (status = 404, description = "Inconnu", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn admin_set_role(
+    State(state): State<AppState>,
+    admin: AdminActor,
+    Path(pseudo): Path<String>,
+    Json(body): Json<SetRoleRequest>,
+) -> Result<axum::http::StatusCode, ApiError> {
+    let cible = infra::admin_repo::find_role_target(&state.pool, &pseudo)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Ce troqueur n'existe pas."))?;
+
+    domain::admin::peut_changer_role(
+        &admin.role,
+        admin.user_id == Some(cible.id),
+        cible.is_master,
+        &body.role,
+    )
+    .map_err(map_admin_error)?;
+
+    if cible.role == body.role {
+        return Ok(axum::http::StatusCode::NO_CONTENT);
+    }
+    infra::admin_repo::set_role(&state.pool, cible.id, &body.role).await?;
+    record_admin_action(
+        &state,
+        admin.user_id,
+        "role_changed",
+        "utilisateur",
+        &cible.id.to_string(),
+        Some(&format!(
+            "{} : {} → {}",
+            cible.pseudo, cible.role, body.role
+        )),
+    )
+    .await;
+    Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+pub(crate) fn map_admin_error(error: domain::admin::AdminError) -> ApiError {
+    match error {
+        domain::admin::AdminError::RoleInvalide => ApiError::bad_request(
+            "role_invalide",
+            "Les rôles possibles sont : utilisateur, admin, super_admin.",
+        ),
+        domain::admin::AdminError::NiveauInsuffisant => ApiError::forbidden(
+            "super_admin_requis",
+            "Seul un super-administrateur gère les rôles.",
+        ),
+        domain::admin::AdminError::CompteMaitre => ApiError::forbidden(
+            "compte_maitre",
+            "Le compte maître ne peut être ni rétrogradé ni sanctionné.",
+        ),
+        domain::admin::AdminError::SoiMeme => ApiError::forbidden(
+            "soi_meme",
+            "On ne modifie pas son propre rôle — demande à un autre super-administrateur.",
+        ),
+    }
 }

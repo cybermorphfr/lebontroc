@@ -33,6 +33,8 @@ use utoipa::{Modify, OpenApi};
         crate::admin::handlers::admin_close_report,
         crate::admin::handlers::admin_list_audit,
         crate::admin::handlers::admin_kpis,
+        crate::admin::handlers::admin_list_staff,
+        crate::admin::handlers::admin_set_role,
         crate::auth::handlers::track_event,
         crate::catalog::handlers::categories,
         crate::catalog::handlers::presign_photos,

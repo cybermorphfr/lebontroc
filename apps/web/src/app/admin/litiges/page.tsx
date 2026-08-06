@@ -1,12 +1,11 @@
 import { revalidatePath } from "next/cache";
+import { adminFetch, adminPost } from "../adminFetch";
 
 export const dynamic = "force-dynamic";
 
 // Page d'administration brute des litiges (F5.2) — protégée par la basic
 // auth Traefik sur /admin ET le token API. L'ergonomie attendra F6.1.
 
-const API = process.env.API_INTERNAL_URL ?? "http://localhost:8080";
-const TOKEN = process.env.ADMIN_TOKEN ?? "";
 
 type Summary = {
   id: string;
@@ -33,29 +32,17 @@ type Detail = Summary & {
   admin_note: string | null;
 };
 
-async function adminGet<T>(path: string): Promise<T | null> {
-  const response = await fetch(`${API}${path}`, {
-    headers: { "X-Admin-Token": TOKEN },
-    cache: "no-store",
-  });
-  return response.ok ? ((await response.json()) as T) : null;
-}
-
 async function resolveDispute(formData: FormData) {
   "use server";
   const id = formData.get("id");
   const outcome = formData.get("outcome");
   const penalized = (formData.get("penalized") as string | null)?.trim();
   const note = (formData.get("note") as string | null)?.trim();
-  await fetch(`${API}/admin/disputes/${id}/resolve`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Admin-Token": TOKEN },
-    body: JSON.stringify({
+  await adminPost(`/admin/disputes/${id}/resolve`, {
       outcome,
       penalized_pseudo: penalized || null,
       note: note || null,
-    }),
-  });
+    });
   revalidatePath("/admin/litiges");
 }
 
@@ -63,18 +50,15 @@ async function liftSanctions(formData: FormData) {
   "use server";
   const pseudo = (formData.get("pseudo") as string | null)?.trim();
   if (pseudo) {
-    await fetch(`${API}/admin/users/${encodeURIComponent(pseudo)}/lift-sanctions`, {
-      method: "POST",
-      headers: { "X-Admin-Token": TOKEN },
-    });
+    await adminPost(`/admin/users/${encodeURIComponent(pseudo)}/lift-sanctions`);
   }
   revalidatePath("/admin/litiges");
 }
 
 export default async function AdminLitigesPage() {
-  const summaries = (await adminGet<Summary[]>("/admin/disputes")) ?? [];
+  const summaries = (await adminFetch<Summary[]>("/admin/disputes")) ?? [];
   const details = (
-    await Promise.all(summaries.map((s) => adminGet<Detail>(`/admin/disputes/${s.id}`)))
+    await Promise.all(summaries.map((s) => adminFetch<Detail>(`/admin/disputes/${s.id}`)))
   ).filter((d): d is Detail => d !== null);
 
   return (

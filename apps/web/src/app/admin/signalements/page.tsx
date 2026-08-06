@@ -1,11 +1,10 @@
 import { revalidatePath } from "next/cache";
+import { adminFetch, adminPost } from "../adminFetch";
 
 export const dynamic = "force-dynamic";
 
 // File des signalements (F6.1).
 
-const API = process.env.API_INTERNAL_URL ?? "http://localhost:8080";
-const TOKEN = process.env.ADMIN_TOKEN ?? "";
 
 type Report = {
   id: string;
@@ -21,20 +20,12 @@ type Report = {
 
 async function closeReport(formData: FormData) {
   "use server";
-  await fetch(`${API}/admin/reports/${formData.get("id")}/close`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Admin-Token": TOKEN },
-    body: JSON.stringify({ outcome: formData.get("outcome") }),
-  });
+  await adminPost(`/admin/reports/${formData.get("id")}/close`, { outcome: formData.get("outcome") });
   revalidatePath("/admin/signalements");
 }
 
 export default async function AdminSignalementsPage() {
-  const response = await fetch(`${API}/admin/reports`, {
-    headers: { "X-Admin-Token": TOKEN },
-    cache: "no-store",
-  });
-  const reports: Report[] = response.ok ? await response.json() : [];
+  const reports: Report[] = (await adminFetch<Report[]>(`/admin/reports`)) ?? [];
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-col gap-3 p-6 font-mono text-sm">

@@ -41,36 +41,83 @@ impl FromRequestParts<AppState> for CurrentUser {
     }
 }
 
-/// Accès aux endpoints d'administration (F5.2) : header `X-Admin-Token`
-/// comparé au token d'environnement — doublé d'une basic auth Traefik sur
-/// le chemin. Un vrai rôle en base attendra le back-office (F6.1).
-#[derive(Debug, Clone, Copy)]
-pub struct AdminAuth;
+/// Accès au panneau d'administration. Deux chemins :
+///
+/// 1. **la session** d'un utilisateur dont le rôle est `admin` ou
+///    `super_admin` — c'est la voie normale, celle qui trace l'auteur ;
+/// 2. **la clé de service** `X-Admin-Token` (exploitation, scripts) : elle
+///    vaut super-admin mais n'a pas d'identité, et le journal l'inscrit
+///    comme « service ».
+///
+/// Une basic auth Traefik protège le chemin `/admin` par-dessus.
+#[derive(Debug, Clone)]
+pub struct AdminActor {
+    /// `None` pour la clé de service.
+    pub user_id: Option<Uuid>,
+    pub role: String,
+    pub is_master: bool,
+}
 
-impl FromRequestParts<AppState> for AdminAuth {
+impl AdminActor {
+    /// Vérifie le niveau super-admin, sinon 403.
+    pub fn require_super(&self) -> Result<(), ApiError> {
+        if domain::admin::est_super_admin(&self.role) {
+            Ok(())
+        } else {
+            Err(ApiError::forbidden(
+                "super_admin_requis",
+                "Cette action est réservée aux super-administrateurs.",
+            ))
+        }
+    }
+}
+
+/// La clé de service a-t-elle été présentée, et est-elle la bonne ?
+fn cle_de_service_valide(parts: &Parts, attendu: &str) -> bool {
+    let fourni = parts
+        .headers
+        .get("x-admin-token")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    // Comparaison en temps constant : pas d'oracle sur la clé.
+    fourni.len() == attendu.len()
+        && fourni
+            .bytes()
+            .zip(attendu.as_bytes().iter())
+            .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+            == 0
+}
+
+impl FromRequestParts<AppState> for AdminActor {
     type Rejection = ApiError;
 
     async fn from_request_parts(
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        let provided = parts
-            .headers
-            .get("x-admin-token")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or_default();
-        // Comparaison en temps constant : pas d'oracle sur le token.
-        let expected = state.config.admin_token.as_bytes();
-        let ok = provided.len() == expected.len()
-            && provided
-                .bytes()
-                .zip(expected.iter())
-                .fold(0u8, |acc, (a, b)| acc | (a ^ b))
-                == 0;
-        if !ok {
-            return Err(ApiError::unauthorized("Accès réservé à l'administration."));
+        if cle_de_service_valide(parts, &state.config.admin_token) {
+            return Ok(AdminActor {
+                user_id: None,
+                role: domain::admin::ROLE_SUPER_ADMIN.to_string(),
+                is_master: false,
+            });
         }
-        Ok(AdminAuth)
+        // Sans session : 401 (identifie-toi). Session sans le rôle : 403.
+        let user =
+            <CurrentUser as FromRequestParts<AppState>>::from_request_parts(parts, state).await?;
+        let refus = || ApiError::forbidden("acces_refuse", "Accès réservé à l'administration.");
+        let info = infra::admin_repo::role_of(&state.pool, user.user_id)
+            .await
+            .map_err(ApiError::from)?
+            .ok_or_else(refus)?;
+        if !domain::admin::peut_administrer(&info.role) {
+            return Err(refus());
+        }
+        Ok(AdminActor {
+            user_id: Some(user.user_id),
+            role: info.role,
+            is_master: info.is_master,
+        })
     }
 }
 
