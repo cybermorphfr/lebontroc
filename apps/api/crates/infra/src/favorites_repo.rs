@@ -3,8 +3,6 @@
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
-use crate::catalog_repo::FeedRow;
-
 /// Ajoute un favori (idempotent). Retourne `true` si c'est une nouveauté.
 pub async fn add_favorite(pool: &PgPool, user_id: Uuid, item_id: Uuid) -> sqlx::Result<bool> {
     let result = sqlx::query(
@@ -55,17 +53,36 @@ pub async fn favorites_counts(pool: &PgPool, item_ids: &[Uuid]) -> sqlx::Result<
     .await
 }
 
+/// Une carte de favori : la carte du fil, plus la catégorie — les favoris
+/// se rangent par rayon, pas par ordre d'arrivée.
+#[derive(Debug, Clone, FromRow)]
+pub struct FavoriteRow {
+    pub id: Uuid,
+    pub owner_id: Uuid,
+    pub title: String,
+    pub condition: String,
+    pub value_cents: i32,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub city: Option<String>,
+    pub distance_km: Option<f64>,
+    /// Catégorie racine (le rayon), pour le regroupement.
+    pub rayon: String,
+    /// Catégorie exacte de l'objet.
+    pub categorie: String,
+}
+
 /// Les favoris encore visibles (disponibles, non supprimés), du plus récent
 /// cœur au plus ancien — mêmes cartes que le fil (ville, distance).
 pub async fn list_favorite_items(
     pool: &PgPool,
     user_id: Uuid,
     viewer: Option<(f64, f64)>,
-) -> sqlx::Result<Vec<FeedRow>> {
+) -> sqlx::Result<Vec<FavoriteRow>> {
     let (lat, lng) = (viewer.map(|v| v.0), viewer.map(|v| v.1));
-    sqlx::query_as::<_, FeedRow>(
+    sqlx::query_as::<_, FavoriteRow>(
         "SELECT i.id, i.owner_id, i.title, i.condition, i.value_cents, i.created_at, \
-                c.nom AS city, \
+                c.nom AS city, cat.label AS categorie, \
+                COALESCE(racine.label, cat.label) AS rayon, \
                 CASE WHEN $2::float8 IS NULL OR c.lat IS NULL THEN NULL \
                      ELSE 2.0 * 6371.0 * asin(sqrt( \
                          pow(sin(radians((c.lat - $2) / 2.0)), 2) \
@@ -75,6 +92,8 @@ pub async fn list_favorite_items(
          FROM favorites f \
          JOIN items i ON i.id = f.item_id \
          JOIN users u ON u.id = i.owner_id \
+         JOIN categories cat ON cat.id = i.category_id \
+         LEFT JOIN categories racine ON racine.id = cat.parent_id \
          LEFT JOIN communes c ON c.code_postal = u.postal_code \
          WHERE f.user_id = $1 AND i.status = 'disponible' AND i.deleted_at IS NULL \
          ORDER BY f.created_at DESC LIMIT 200",

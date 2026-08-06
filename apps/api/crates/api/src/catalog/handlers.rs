@@ -11,10 +11,10 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::catalog::dto::{
-    CategoryNode, CreateItemRequest, FeedCard, FeedResponse, ItemDetailResponse, ItemOwnerResponse,
-    ItemPhotoResponse, ItemResponse, PresignRequest, PresignedPhoto, PublicProfileResponse,
-    ReplacePhotosRequest, SearchResponse, UpdateItemRequest, UpdateWishlistRequest,
-    WishlistEntryDto,
+    CategoryNode, CreateItemRequest, FavoriteCard, FeedCard, FeedResponse, ItemDetailResponse,
+    ItemOwnerResponse, ItemPhotoResponse, ItemResponse, PresignRequest, PresignedPhoto,
+    PublicProfileResponse, ReplacePhotosRequest, SearchResponse, UpdateItemRequest,
+    UpdateWishlistRequest, WishlistEntryDto,
 };
 use crate::error::ApiError;
 use crate::extract::CurrentUser;
@@ -364,13 +364,46 @@ async fn viewer_coords(
     state: &AppState,
     viewer: Option<&CurrentUser>,
 ) -> Result<Option<(f64, f64)>, ApiError> {
+    Ok(point_de_reference(state, viewer, None).await?.0)
+}
+
+/// D'où les distances sont-elles mesurées ? Le code postal passé en
+/// paramètre l'emporte — on cherche parfois autour de son futur
+/// déménagement, ou du bureau. À défaut, la commune du profil.
+/// Renvoie les coordonnées et le nom de la commune de référence.
+async fn point_de_reference(
+    state: &AppState,
+    viewer: Option<&CurrentUser>,
+    code_postal: Option<&str>,
+) -> Result<(Option<(f64, f64)>, Option<String>), ApiError> {
+    if let Some(code) = code_postal
+        .map(str::trim)
+        .filter(|c| c.len() == 5 && c.chars().all(|c| c.is_ascii_digit()))
+    {
+        if let Some(coords) =
+            infra::catalog_repo::commune_coords_for_postal_code(&state.pool, code).await?
+        {
+            let nom = infra::catalog_repo::commune_name_for_postal_code(&state.pool, code).await?;
+            return Ok((Some(coords), nom));
+        }
+        // Code postal inconnu de notre référentiel : on le dit plutôt que
+        // de replier silencieusement sur le profil.
+        return Err(ApiError::bad_request(
+            "code_postal_inconnu",
+            "Ce code postal n'est pas dans notre référentiel de communes.",
+        ));
+    }
     let Some(viewer) = viewer else {
-        return Ok(None);
+        return Ok((None, None));
     };
     let Some(user) = infra::auth_repo::find_user_by_id(&state.pool, viewer.user_id).await? else {
-        return Ok(None);
+        return Ok((None, None));
     };
-    Ok(infra::catalog_repo::commune_coords_for_postal_code(&state.pool, &user.postal_code).await?)
+    let coords =
+        infra::catalog_repo::commune_coords_for_postal_code(&state.pool, &user.postal_code).await?;
+    let nom =
+        infra::catalog_repo::commune_name_for_postal_code(&state.pool, &user.postal_code).await?;
+    Ok((coords, nom))
 }
 
 fn arrondi_km(km: f64) -> f64 {
@@ -380,6 +413,9 @@ fn arrondi_km(km: f64) -> f64 {
 #[derive(Deserialize)]
 pub struct FeedQuery {
     pub page: Option<u32>,
+    /// Mesurer les distances depuis ce code postal plutôt que celui du
+    /// profil.
+    pub postal_code: Option<String>,
 }
 
 /// Fil d'accueil : objets disponibles triés par proximité et fraîcheur.
@@ -389,7 +425,10 @@ pub struct FeedQuery {
     get,
     path = "/feed",
     tag = "catalog",
-    params(("page" = Option<u32>, Query, description = "Page (1 par défaut, 24 objets par page)")),
+    params(
+        ("page" = Option<u32>, Query, description = "Page (1 par défaut, 24 objets par page)"),
+        ("postal_code" = Option<String>, Query, description = "Mesurer les distances depuis ce code postal")
+    ),
     responses((status = 200, description = "Fil paginé", body = FeedResponse))
 )]
 pub async fn feed(
@@ -398,7 +437,8 @@ pub async fn feed(
     Query(query): Query<FeedQuery>,
 ) -> Result<Json<FeedResponse>, ApiError> {
     let page = query.page.unwrap_or(1).clamp(1, 500);
-    let coords = viewer_coords(&state, viewer.as_ref()).await?;
+    let (coords, reference) =
+        point_de_reference(&state, viewer.as_ref(), query.postal_code.as_deref()).await?;
 
     // Une ligne de plus que la page pour savoir s'il en reste.
     let mut rows = infra::catalog_repo::list_feed_items(
@@ -449,6 +489,7 @@ pub async fn feed(
             .collect(),
         page,
         has_more,
+        reference,
     }))
 }
 
@@ -462,6 +503,9 @@ pub struct SearchQuery {
     pub max_km: Option<f64>,
     pub sort: Option<String>,
     pub page: Option<u32>,
+    /// Mesurer les distances depuis ce code postal plutôt que celui du
+    /// profil — un visiteur non connecté peut ainsi filtrer aussi.
+    pub postal_code: Option<String>,
 }
 
 /// Recherche d'objets : plein texte tolérant aux fautes + filtres combinables.
@@ -479,7 +523,8 @@ pub struct SearchQuery {
         ("soulte" = Option<bool>, Query, description = "true : uniquement les objets acceptant une soulte"),
         ("max_km" = Option<f64>, Query, description = "Distance maximale en km (visiteur connecté)"),
         ("sort" = Option<String>, Query, description = "pertinence (défaut), distance ou recence"),
-        ("page" = Option<u32>, Query, description = "Page (1 par défaut, 24 résultats par page)")
+        ("page" = Option<u32>, Query, description = "Page (1 par défaut, 24 résultats par page)"),
+        ("postal_code" = Option<String>, Query, description = "Mesurer les distances depuis ce code postal")
     ),
     responses((status = 200, description = "Résultats paginés", body = SearchResponse))
 )]
@@ -489,7 +534,8 @@ pub async fn search(
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<SearchResponse>, ApiError> {
     let page = query.page.unwrap_or(1).clamp(1, 500);
-    let coords = viewer_coords(&state, viewer.as_ref()).await?;
+    let (coords, reference) =
+        point_de_reference(&state, viewer.as_ref(), query.postal_code.as_deref()).await?;
     let q = query
         .q
         .as_deref()
@@ -581,6 +627,7 @@ pub async fn search(
             .collect(),
         page,
         has_more,
+        reference,
     }))
 }
 
@@ -1086,12 +1133,12 @@ pub async fn unfavorite_item(
     get,
     path = "/me/favorites",
     tag = "catalog",
-    responses((status = 200, description = "Mes favoris", body = [FeedCard]))
+    responses((status = 200, description = "Mes favoris", body = [FavoriteCard]))
 )]
 pub async fn my_favorites(
     State(state): State<AppState>,
     user: CurrentUser,
-) -> Result<Json<Vec<FeedCard>>, ApiError> {
+) -> Result<Json<Vec<FavoriteCard>>, ApiError> {
     let coords = viewer_coords(&state, Some(&user)).await?;
     let rows =
         infra::favorites_repo::list_favorite_items(&state.pool, user.user_id, coords).await?;
@@ -1105,7 +1152,7 @@ pub async fn my_favorites(
     }
     Ok(Json(
         rows.into_iter()
-            .map(|row| FeedCard {
+            .map(|row| FavoriteCard {
                 photo_url: cover_by_item.remove(&row.id),
                 id: row.id,
                 title: row.title,
@@ -1114,6 +1161,8 @@ pub async fn my_favorites(
                 city: row.city,
                 distance_km: row.distance_km.map(arrondi_km),
                 created_at: row.created_at,
+                rayon: row.rayon,
+                categorie: row.categorie,
             })
             .collect(),
     ))

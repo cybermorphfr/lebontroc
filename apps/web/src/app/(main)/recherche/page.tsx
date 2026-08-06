@@ -27,6 +27,7 @@ export default async function RecherchePage({
         initialQuery={q ?? ""}
         initialCategoryId={categorie ?? ""}
         loggedIn={user !== null}
+        codePostalProfil={user?.postal_code ?? ""}
       />
     </main>
   );

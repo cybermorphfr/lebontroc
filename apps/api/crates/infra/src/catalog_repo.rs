@@ -426,3 +426,16 @@ pub async fn replace_item_photos(
     tx.commit().await?;
     Ok(removed.into_iter().map(|r| r.0).collect())
 }
+
+/// Le nom de la commune d'un code postal — pour dire au visiteur depuis
+/// où les distances sont mesurées.
+pub async fn commune_name_for_postal_code(
+    pool: &PgPool,
+    code_postal: &str,
+) -> sqlx::Result<Option<String>> {
+    let row: Option<(String,)> = sqlx::query_as("SELECT nom FROM communes WHERE code_postal = $1")
+        .bind(code_postal)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.map(|r| r.0))
+}

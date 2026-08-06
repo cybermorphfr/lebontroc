@@ -4356,6 +4356,108 @@ async fn admin_signalements_audit_recherche_et_kpis(pool: PgPool) {
     assert_eq!(kpis["items_published"], 1);
 }
 
+/// Le point de référence des distances : par défaut la commune du profil,
+/// mais un code postal explicite l'emporte — y compris pour un visiteur
+/// non connecté, qui pouvait jusqu'ici seulement subir un tri par date.
+#[sqlx::test(migrations = "../../migrations")]
+async fn distance_depuis_une_adresse_de_reference(pool: PgPool) {
+    let (app, emails) = app(pool.clone());
+    // Alice publie à Nantes (44000), Bob habite Paris (75001).
+    let alice = verified_user_at(&app, &emails, "geo1@exemple.fr", "galice2", "44000").await;
+    publish_valued(&app, &alice, "Vélo nantais", 15_000).await;
+    let bob = verified_user_at(&app, &emails, "geo2@exemple.fr", "gbob2", "75001").await;
+
+    // Bob voit l'objet loin de chez lui.
+    let vue_parisienne =
+        body_json(call(&app, request("GET", "/search?q=vélo", None, Some(&bob))).await).await;
+    let loin = vue_parisienne["items"][0]["distance_km"]
+        .as_f64()
+        .expect("distance");
+    assert!(
+        loin > 300.0,
+        "Paris → Nantes devrait dépasser 300 km : {loin}"
+    );
+    assert_eq!(vue_parisienne["reference"], "Paris");
+
+    // Le même Bob, en cherchant « autour de Nantes », le voit tout près.
+    let vue_nantaise = body_json(
+        call(
+            &app,
+            request("GET", "/search?q=vélo&postal_code=44000", None, Some(&bob)),
+        )
+        .await,
+    )
+    .await;
+    let pres = vue_nantaise["items"][0]["distance_km"]
+        .as_f64()
+        .expect("distance");
+    assert!(
+        pres < 5.0,
+        "depuis Nantes même, la distance doit être nulle : {pres}"
+    );
+    assert_eq!(vue_nantaise["reference"], "Nantes");
+
+    // Un visiteur non connecté peut désormais filtrer par distance.
+    let anonyme = body_json(
+        call(
+            &app,
+            request(
+                "GET",
+                "/search?q=vélo&postal_code=44000&max_km=5",
+                None,
+                None,
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(anonyme["items"].as_array().expect("items").len(), 1);
+    assert_eq!(anonyme["reference"], "Nantes");
+
+    // Le même filtre depuis Paris ne remonte rien.
+    let anonyme_loin = body_json(
+        call(
+            &app,
+            request(
+                "GET",
+                "/search?q=vélo&postal_code=75001&max_km=5",
+                None,
+                None,
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert!(anonyme_loin["items"].as_array().expect("items").is_empty());
+
+    // Un code postal hors référentiel est refusé franchement.
+    let response = call(
+        &app,
+        request("GET", "/search?q=vélo&postal_code=99999", None, None),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    // Les favoris portent leur catégorie, pour être rangés par rayon.
+    let items = body_json(call(&app, request("GET", "/feed", None, Some(&bob))).await).await;
+    let item_id = items["items"][0]["id"].as_str().expect("id").to_string();
+    let response = call(
+        &app,
+        request(
+            "PUT",
+            &format!("/items/{item_id}/favorite"),
+            None,
+            Some(&bob),
+        ),
+    )
+    .await;
+    assert!(response.status().is_success());
+    let favoris =
+        body_json(call(&app, request("GET", "/me/favorites", None, Some(&bob))).await).await;
+    assert_eq!(favoris[0]["rayon"], "Enfants et puériculture");
+    assert!(favoris[0]["categorie"].as_str().is_some());
+}
+
 /// Modération du catalogue et dossier d'un membre : la file d'annonces,
 /// l'arborescence, le retrait d'une annonce (notifié à son propriétaire)
 /// et l'autocomplétion des pseudos.

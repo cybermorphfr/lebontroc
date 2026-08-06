@@ -9,6 +9,7 @@ import { getCurrentUser } from "@/lib/server-api";
 import { ECHANGE, euros, STATUS_PROPOSITION } from "@/lib/format";
 
 import { AcceptButton } from "./AcceptButton";
+import { Avancement } from "./Avancement";
 import { DisputePanel } from "./DisputePanel";
 import { MeetupPanel } from "./MeetupPanel";
 import { PaymentPanel } from "./PaymentPanel";
@@ -96,17 +97,27 @@ export default async function TrocDetailPage({
       ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2">
+        {/* Toujours la même lecture, partout : à gauche ce qui part de
+            chez toi, à droite ce qui arrive. */}
         <RecapCard
-          title={proposal.is_proposer ? "Tu donnes" : `${proposal.proposer_pseudo} propose`}
-          items={proposal.offered}
-          cash={proposal.cash_direction === "du_proposant" ? proposal.cash_cents : 0}
-          ton={proposal.is_proposer ? "donne" : "recoit"}
+          title="Tu donnes"
+          items={proposal.is_proposer ? proposal.offered : proposal.requested}
+          cash={
+            proposal.cash_direction === (proposal.is_proposer ? "du_proposant" : "du_destinataire")
+              ? proposal.cash_cents
+              : 0
+          }
+          ton="donne"
         />
         <RecapCard
-          title={proposal.is_proposer ? "Tu reçois" : "Tu donnes"}
-          items={proposal.requested}
-          cash={proposal.cash_direction === "du_destinataire" ? proposal.cash_cents : 0}
-          ton={proposal.is_proposer ? "recoit" : "donne"}
+          title={`${proposal.is_proposer ? proposal.recipient_pseudo : proposal.proposer_pseudo} te donne`}
+          items={proposal.is_proposer ? proposal.requested : proposal.offered}
+          cash={
+            proposal.cash_direction === (proposal.is_proposer ? "du_destinataire" : "du_proposant")
+              ? proposal.cash_cents
+              : 0
+          }
+          ton="recoit"
         />
       </div>
 
@@ -128,6 +139,12 @@ export default async function TrocDetailPage({
             : ""}
           . Les objets sont réservés : organisez la remise ci-dessous.
         </p>
+      ) : null}
+
+      {trade ? (
+        <div className="mt-4">
+          <Avancement trade={trade} />
+        </div>
       ) : null}
 
       {trade?.delivery_mode === "envoi" ? (

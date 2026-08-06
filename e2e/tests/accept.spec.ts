@@ -104,14 +104,14 @@ test("contre-proposition puis acceptation : troc conclu, objets réservés", asy
   await pageAlice.getByRole("button", { name: /Envoyer ma contre-proposition/ }).click();
 
   // Un seul endroit pour négocier : le fil porte les deux offres, et se lit
-  // toujours pareil (à gauche ce que l'autre propose, à droite ce que je donne).
+  // toujours pareil (à gauche ce que je donne, à droite ce que je reçois).
   await expect(pageAlice.getByText("🔁 Ta proposition")).toBeVisible();
   await expect(pageAlice.getByText(/🔁 Proposition de /)).toBeVisible();
   await expect(
     pageAlice.getByText("Remplacée par une contre-proposition"),
   ).toBeVisible();
   await expect(pageAlice.getByText("Tu donnes").first()).toBeVisible();
-  await expect(pageAlice.getByText(/propose$/).first()).toBeVisible();
+  await expect(pageAlice.getByText(/te donne$/).first()).toBeVisible();
   // « Vue » dès que l'autre partie a suivi la contre-proposition en temps
   // réel — sinon « Envoyée » : les deux valent, seule compte l'ouverture.
   await expect(pageAlice.getByTestId("statut-proposition")).toHaveText(/Envoyée|Vue/);

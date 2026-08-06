@@ -1209,6 +1209,15 @@
               "format": "int32",
               "minimum": 0
             }
+          },
+          {
+            "name": "postal_code",
+            "in": "query",
+            "description": "Mesurer les distances depuis ce code postal",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -1860,7 +1869,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/FeedCard"
+                    "$ref": "#/components/schemas/FavoriteCard"
                   }
                 }
               }
@@ -2888,6 +2897,15 @@
               "type": "integer",
               "format": "int32",
               "minimum": 0
+            }
+          },
+          {
+            "name": "postal_code",
+            "in": "query",
+            "description": "Mesurer les distances depuis ce code postal",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -5118,6 +5136,66 @@
           }
         }
       },
+      "FavoriteCard": {
+        "type": "object",
+        "description": "Une carte de favori : la carte du fil, augmentée de sa catégorie —\nla page des favoris les range par rayon.",
+        "required": [
+          "id",
+          "title",
+          "condition",
+          "value_cents",
+          "created_at",
+          "rayon",
+          "categorie"
+        ],
+        "properties": {
+          "categorie": {
+            "type": "string",
+            "description": "Catégorie exacte : « Meubles », « Consoles et jeux vidéo »…"
+          },
+          "city": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "condition": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "distance_km": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "photo_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rayon": {
+            "type": "string",
+            "description": "Catégorie racine : « Maison et déco », « Électronique »…"
+          },
+          "title": {
+            "type": "string"
+          },
+          "value_cents": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "FeedCard": {
         "type": "object",
         "description": "Carte du fil d'accueil — volontairement légère (grille photo).",
@@ -5193,6 +5271,13 @@
             "type": "integer",
             "format": "int32",
             "minimum": 0
+          },
+          "reference": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Commune depuis laquelle les distances sont mesurées."
           }
         }
       },
@@ -6273,6 +6358,13 @@
             "type": "integer",
             "format": "int32",
             "minimum": 0
+          },
+          "reference": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Commune depuis laquelle les distances sont mesurées."
           }
         }
       },

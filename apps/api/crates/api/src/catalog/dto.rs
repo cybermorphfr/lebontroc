@@ -153,6 +153,8 @@ pub struct SearchResponse {
     pub page: u32,
     /// `true` s'il reste des résultats à charger.
     pub has_more: bool,
+    /// Commune depuis laquelle les distances sont mesurées.
+    pub reference: Option<String>,
 }
 
 /// Carte du fil d'accueil — volontairement légère (grille photo).
@@ -171,12 +173,32 @@ pub struct FeedCard {
     pub created_at: DateTime<Utc>,
 }
 
+/// Une carte de favori : la carte du fil, augmentée de sa catégorie —
+/// la page des favoris les range par rayon.
+#[derive(Serialize, ToSchema)]
+pub struct FavoriteCard {
+    pub id: Uuid,
+    pub title: String,
+    pub condition: String,
+    pub value_cents: i32,
+    pub city: Option<String>,
+    pub distance_km: Option<f64>,
+    pub photo_url: Option<String>,
+    pub created_at: DateTime<Utc>,
+    /// Catégorie racine : « Maison et déco », « Électronique »…
+    pub rayon: String,
+    /// Catégorie exacte : « Meubles », « Consoles et jeux vidéo »…
+    pub categorie: String,
+}
+
 #[derive(Serialize, ToSchema)]
 pub struct FeedResponse {
     pub items: Vec<FeedCard>,
     pub page: u32,
     /// `true` s'il reste des objets à charger (infinite scroll).
     pub has_more: bool,
+    /// Commune depuis laquelle les distances sont mesurées.
+    pub reference: Option<String>,
 }
 
 /// Encart propriétaire d'une fiche objet.

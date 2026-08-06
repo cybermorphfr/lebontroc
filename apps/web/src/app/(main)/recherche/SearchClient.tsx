@@ -45,6 +45,8 @@ type Filters = {
   delivery: string;
   maxKm: string;
   soulte: boolean;
+  /** D'où l'on mesure les distances. Vide = la commune du profil. */
+  codePostal: string;
 };
 
 const AUCUN_FILTRE: Filters = {
@@ -53,6 +55,7 @@ const AUCUN_FILTRE: Filters = {
   delivery: "",
   maxKm: "",
   soulte: false,
+  codePostal: "",
 };
 
 function buildParams(q: string, filters: Filters, sort: string, page: number): string {
@@ -63,6 +66,9 @@ function buildParams(q: string, filters: Filters, sort: string, page: number): s
   if (filters.delivery) params.set("delivery", filters.delivery);
   if (filters.maxKm) params.set("max_km", filters.maxKm);
   if (filters.soulte) params.set("soulte", "true");
+  // Cinq chiffres seulement : sinon l'API répond « code postal inconnu »
+  // à chaque frappe intermédiaire.
+  if (/^\d{5}$/.test(filters.codePostal)) params.set("postal_code", filters.codePostal);
   params.set("sort", sort);
   params.set("page", String(page));
   return params.toString();
@@ -73,17 +79,23 @@ export function SearchClient({
   initialQuery,
   initialCategoryId = "",
   loggedIn,
+  codePostalProfil = "",
 }: {
   roots: { id: number; label: string }[];
   initialQuery: string;
   initialCategoryId?: string;
   loggedIn: boolean;
+  /** Code postal du profil : le point de référence par défaut. */
+  codePostalProfil?: string;
 }) {
   const [q, setQ] = useState(initialQuery);
   const [filters, setFilters] = useState<Filters>({
     ...AUCUN_FILTRE,
     categoryId: initialCategoryId,
+    codePostal: codePostalProfil,
   });
+  // La commune renvoyée par l'API : « distances depuis Nantes ».
+  const [reference, setReference] = useState<string | null>(null);
   const [sort, setSort] = useState("pertinence");
   const [items, setItems] = useState<FeedCard[]>([]);
   const [page, setPage] = useState(1);
@@ -139,6 +151,7 @@ export function SearchClient({
         setItems(data.items);
         setPage(1);
         setHasMore(data.has_more);
+        setReference(data.reference ?? null);
         if (data.items.length > 0) remember(q);
       } finally {
         if (id === requestId.current) setLoading(false);
@@ -309,18 +322,44 @@ export function SearchClient({
             onChange={(delivery) => setFilters((f) => ({ ...f, delivery }))}
           />
 
-          {loggedIn ? (
+          <div className="flex flex-col gap-2">
             <Segmented
               label="Distance max"
               options={DISTANCES}
               value={filters.maxKm}
               onChange={(maxKm) => setFilters((f) => ({ ...f, maxKm }))}
             />
-          ) : (
-            <p className="text-xs text-neutre-700">
-              Connecte-toi pour filtrer par distance autour de chez toi.
-            </p>
-          )}
+            <label className="flex flex-wrap items-center gap-2 rounded-3xl bg-sable p-4">
+              <span className="text-sm font-semibold">Autour de</span>
+              <input
+                inputMode="numeric"
+                maxLength={5}
+                placeholder={codePostalProfil || "code postal"}
+                value={filters.codePostal}
+                onChange={(e) =>
+                  setFilters((f) => ({ ...f, codePostal: e.target.value.replace(/\D/g, "") }))
+                }
+                aria-label="Code postal de référence"
+                className="w-28 rounded-full border border-neutre-300 bg-creme px-3.5 py-2 text-sm outline-none focus:border-terracotta-500"
+              />
+              {filters.codePostal && filters.codePostal !== codePostalProfil ? (
+                <button
+                  type="button"
+                  onClick={() => setFilters((f) => ({ ...f, codePostal: codePostalProfil }))}
+                  className="cursor-pointer text-xs text-terracotta-700 underline"
+                >
+                  revenir chez moi
+                </button>
+              ) : null}
+              <span className="w-full text-xs text-neutre-700">
+                {reference
+                  ? `Distances mesurées depuis ${reference}.`
+                  : loggedIn
+                    ? "Distances mesurées depuis la commune de ton profil."
+                    : "Saisis un code postal pour trier et filtrer par distance."}
+              </span>
+            </label>
+          </div>
 
           <label className="flex cursor-pointer items-center justify-between gap-3 rounded-3xl bg-sable p-4">
             <span className="text-sm font-semibold">Accepte une soulte</span>

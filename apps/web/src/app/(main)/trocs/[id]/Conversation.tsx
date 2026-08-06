@@ -401,8 +401,8 @@ const LIBELLE_STATUT: Record<string, string> = {
 
 /**
  * Une offre dans le fil. Lecture toujours identique quel que soit
- * l'auteur : à GAUCHE ce que l'autre propose, à DROITE ce que je donne en
- * échange — on ne se demande jamais « dans quel sens lire ».
+ * l'auteur : à GAUCHE ce que je donne, à DROITE ce que je reçois — on ne
+ * se demande jamais « dans quel sens lire ».
  */
 function PropositionCard({
   entree,
@@ -445,20 +445,21 @@ function PropositionCard({
           🔁 {entree.is_mine ? "Ta proposition" : `Proposition de ${entree.author_pseudo}`}
         </p>
         <div className="flex items-stretch gap-2">
-          <Colonne
-            titre={`${otherPseudo} propose`}
-            items={sien}
-            soulte={soulteSienne}
-            ton="recoit"
-          />
+          <Colonne titre="Tu donnes" items={mien} soulte={soulteMienne} ton="donne" />
           <span aria-hidden className="self-center text-lg text-neutre-700">
             ↔
           </span>
-          <Colonne titre="Tu donnes" items={mien} soulte={soulteMienne} ton="donne" align="right" />
+          <Colonne
+            titre={`${otherPseudo} te donne`}
+            items={sien}
+            soulte={soulteSienne}
+            ton="recoit"
+            align="right"
+          />
         </div>
 
         <div className="mt-2 flex items-center justify-between gap-2 border-t border-encre/10 pt-2 text-[11px]">
-          <span className={ECHANGE.recoit.texte}>Tu reçois ~{euros(recu)}</span>
+          <span className={ECHANGE.donne.texte}>Tu donnes ~{euros(donne)}</span>
           <span className="font-semibold text-neutre-700">
             {ecart === 0
               ? "Échange équilibré"
@@ -466,7 +467,7 @@ function PropositionCard({
                 ? `À ton avantage : +${euros(ecart)}`
                 : `À ton désavantage : −${euros(-ecart)}`}
           </span>
-          <span className={ECHANGE.donne.texte}>Tu donnes ~{euros(donne)}</span>
+          <span className={ECHANGE.recoit.texte}>Tu reçois ~{euros(recu)}</span>
         </div>
 
         {entree.message ? (
