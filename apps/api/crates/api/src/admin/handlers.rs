@@ -485,3 +485,279 @@ pub async fn notify_admins(state: &AppState, titre: String, corps: String, lien:
         .await;
     }
 }
+
+// ————— Tableau de bord (super-admin) —————
+
+#[derive(Serialize, ToSchema)]
+pub struct DashboardResponse {
+    /// Séries quotidiennes des 30 derniers jours.
+    pub series: Vec<DashboardPoint>,
+    pub activite: DashboardActivite,
+    pub marketplace: DashboardMarketplace,
+    pub top_categories: Vec<DashboardTop>,
+    pub top_communes: Vec<DashboardTop>,
+    pub qualite: DashboardQualite,
+    /// Paiements SIMULÉS en bêta : des ordres de grandeur, pas de la
+    /// trésorerie.
+    pub finances_beta: DashboardFinances,
+    pub systeme: DashboardSysteme,
+    pub tendance: DashboardTendance,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct DashboardPoint {
+    pub jour: String,
+    pub inscriptions: i64,
+    pub annonces: i64,
+    pub propositions: i64,
+    pub trocs_finalises: i64,
+    pub volume_soulte_cents: i64,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct DashboardActivite {
+    pub inscrits_total: i64,
+    pub comptes_supprimes: i64,
+    pub comptes_bannis: i64,
+    pub comptes_restreints: i64,
+    pub dau: i64,
+    pub wau: i64,
+    pub mau: i64,
+    pub recherches_7j: i64,
+    pub messages_7j: i64,
+    pub favoris_total: i64,
+    pub notifications_ouvertes_7j: i64,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct DashboardMarketplace {
+    pub annonces_actives: i64,
+    pub annonces_reservees: i64,
+    pub annonces_troquees: i64,
+    pub propositions_total: i64,
+    pub contre_propositions: i64,
+    pub taux_acceptation_pct: f64,
+    pub heures_moyennes_avant_accord: Option<f64>,
+    pub valeur_echangee_cents: i64,
+    pub heures_avant_premier_message: Option<f64>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct DashboardTop {
+    pub libelle: String,
+    pub total: i64,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct DashboardQualite {
+    pub litiges_ouverts: i64,
+    pub litiges_en_examen: i64,
+    pub litiges_tranches: i64,
+    pub heures_moyennes_resolution: Option<f64>,
+    pub signalements_en_attente: i64,
+    pub note_moyenne: Option<f64>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct DashboardFinances {
+    pub soultes_capturees_cents: i64,
+    pub soultes_sequestrees_cents: i64,
+    pub frais_service_percus_cents: i64,
+    pub transport_encaisse_cents: i64,
+    pub commissions_cents: i64,
+    pub paiements_echoues: i64,
+    pub jours_moyens_finalisation: Option<f64>,
+    pub colis_expedies: i64,
+    pub trocs_envoi_litigieux: i64,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct DashboardSysteme {
+    pub version: String,
+    pub taille_base: String,
+    pub evenements_telemetrie: i64,
+    pub evenements_non_exportes: i64,
+    pub notifications_stockees: i64,
+    pub sessions_actives: i64,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct DashboardTendance {
+    pub litiges_7j: i64,
+    pub litiges_7j_precedents: i64,
+    pub trocs_7j: i64,
+    pub trocs_7j_precedents: i64,
+    pub echecs_paiement_7j: i64,
+}
+
+/// Le tableau de bord complet — chaque nombre sort des données réelles.
+#[utoipa::path(
+    get,
+    path = "/admin/dashboard",
+    tag = "admin",
+    responses((status = 200, description = "Toutes les métriques", body = DashboardResponse))
+)]
+pub async fn admin_dashboard(
+    State(state): State<AppState>,
+    admin: AdminActor,
+) -> Result<Json<DashboardResponse>, ApiError> {
+    admin.require_super()?;
+    let series = infra::dashboard_repo::daily_series(&state.pool).await?;
+    let activite = infra::dashboard_repo::activite(&state.pool).await?;
+    let marketplace = infra::dashboard_repo::marketplace(&state.pool).await?;
+    let top_categories = infra::dashboard_repo::top_categories(&state.pool).await?;
+    let top_communes = infra::dashboard_repo::top_communes(&state.pool).await?;
+    let qualite = infra::dashboard_repo::qualite(&state.pool).await?;
+    let finances = infra::dashboard_repo::finances_beta(&state.pool).await?;
+    let systeme = infra::dashboard_repo::systeme(&state.pool).await?;
+    let tendance = infra::dashboard_repo::tendance(&state.pool).await?;
+    let to_top = |v: Vec<infra::dashboard_repo::TopEntry>| {
+        v.into_iter()
+            .map(|t| DashboardTop {
+                libelle: t.libelle,
+                total: t.total,
+            })
+            .collect()
+    };
+    Ok(Json(DashboardResponse {
+        series: series
+            .into_iter()
+            .map(|p| DashboardPoint {
+                jour: p.jour.to_string(),
+                inscriptions: p.inscriptions,
+                annonces: p.annonces,
+                propositions: p.propositions,
+                trocs_finalises: p.trocs_finalises,
+                volume_soulte_cents: p.volume_soulte_cents,
+            })
+            .collect(),
+        activite: DashboardActivite {
+            inscrits_total: activite.inscrits_total,
+            comptes_supprimes: activite.comptes_supprimes,
+            comptes_bannis: activite.comptes_bannis,
+            comptes_restreints: activite.comptes_restreints,
+            dau: activite.dau,
+            wau: activite.wau,
+            mau: activite.mau,
+            recherches_7j: activite.recherches_7j,
+            messages_7j: activite.messages_7j,
+            favoris_total: activite.favoris_total,
+            notifications_ouvertes_7j: activite.notifications_ouvertes_7j,
+        },
+        marketplace: DashboardMarketplace {
+            annonces_actives: marketplace.annonces_actives,
+            annonces_reservees: marketplace.annonces_reservees,
+            annonces_troquees: marketplace.annonces_troquees,
+            propositions_total: marketplace.propositions_total,
+            contre_propositions: marketplace.contre_propositions,
+            taux_acceptation_pct: marketplace.taux_acceptation_pct,
+            heures_moyennes_avant_accord: marketplace.heures_moyennes_avant_accord,
+            valeur_echangee_cents: marketplace.valeur_echangee_cents,
+            heures_avant_premier_message: marketplace.heures_avant_premier_message,
+        },
+        top_categories: to_top(top_categories),
+        top_communes: to_top(top_communes),
+        qualite: DashboardQualite {
+            litiges_ouverts: qualite.litiges_ouverts,
+            litiges_en_examen: qualite.litiges_en_examen,
+            litiges_tranches: qualite.litiges_tranches,
+            heures_moyennes_resolution: qualite.heures_moyennes_resolution,
+            signalements_en_attente: qualite.signalements_en_attente,
+            note_moyenne: qualite.note_moyenne,
+        },
+        finances_beta: DashboardFinances {
+            soultes_capturees_cents: finances.soultes_capturees_cents,
+            soultes_sequestrees_cents: finances.soultes_sequestrees_cents,
+            frais_service_percus_cents: finances.frais_service_percus_cents,
+            transport_encaisse_cents: finances.transport_encaisse_cents,
+            commissions_cents: finances.commissions_cents,
+            paiements_echoues: finances.paiements_echoues,
+            jours_moyens_finalisation: finances.jours_moyens_finalisation,
+            colis_expedies: finances.colis_expedies,
+            trocs_envoi_litigieux: finances.trocs_envoi_litigieux,
+        },
+        systeme: DashboardSysteme {
+            version: state.version.clone(),
+            taille_base: systeme.taille_base,
+            evenements_telemetrie: systeme.evenements_telemetrie,
+            evenements_non_exportes: systeme.evenements_non_exportes,
+            notifications_stockees: systeme.notifications_stockees,
+            sessions_actives: systeme.sessions_actives,
+        },
+        tendance: DashboardTendance {
+            litiges_7j: tendance.litiges_7j,
+            litiges_7j_precedents: tendance.litiges_7j_precedents,
+            trocs_7j: tendance.trocs_7j,
+            trocs_7j_precedents: tendance.trocs_7j_precedents,
+            echecs_paiement_7j: tendance.echecs_paiement_7j,
+        },
+    }))
+}
+
+/// Alertes intelligentes : comparaisons hebdomadaires, déclenchées par la
+/// maintenance quotidienne — chaque alerte notifie l'équipe (in-app +
+/// e-mail) et se journalise pour ne partir qu'une fois par jour.
+pub async fn check_alerts(state: &AppState) {
+    let tendance = match infra::dashboard_repo::tendance(&state.pool).await {
+        Ok(t) => t,
+        Err(error) => {
+            tracing::error!(%error, "calcul des tendances en échec");
+            return;
+        }
+    };
+    let mut alertes: Vec<String> = Vec::new();
+    if tendance.litiges_7j >= 3 && tendance.litiges_7j >= tendance.litiges_7j_precedents * 2 {
+        alertes.push(format!(
+            "Hausse des litiges : {} sur 7 jours (contre {} la semaine précédente).",
+            tendance.litiges_7j, tendance.litiges_7j_precedents
+        ));
+    }
+    if tendance.trocs_7j_precedents >= 5 && tendance.trocs_7j * 2 < tendance.trocs_7j_precedents {
+        alertes.push(format!(
+            "Chute des trocs : {} sur 7 jours (contre {} la semaine précédente).",
+            tendance.trocs_7j, tendance.trocs_7j_precedents
+        ));
+    }
+    if tendance.echecs_paiement_7j >= 5 {
+        alertes.push(format!(
+            "Échecs de paiement en série : {} sur 7 jours.",
+            tendance.echecs_paiement_7j
+        ));
+    }
+    for alerte in alertes {
+        // Une seule fois par 24 h : le journal fait l'idempotence.
+        let deja: Result<Option<(i64,)>, _> = sqlx::query_as(
+            "SELECT id FROM admin_audit WHERE action = 'alerte' AND details = $1 \
+             AND created_at > now() - interval '24 hours' LIMIT 1",
+        )
+        .bind(&alerte)
+        .fetch_optional(&state.pool)
+        .await;
+        if !matches!(deja, Ok(None)) {
+            continue;
+        }
+        let _ = infra::admin_repo::record_audit(
+            &state.pool,
+            None,
+            "alerte",
+            "system",
+            "tendance",
+            Some(&alerte),
+        )
+        .await;
+        notify_admins(
+            state,
+            "📉 Alerte d'exploitation".to_string(),
+            alerte.clone(),
+            "/admin".to_string(),
+        )
+        .await;
+        if let Err(error) = state
+            .mailer
+            .send_admin_dispute(&state.config.admin_email, "alerte", &alerte)
+            .await
+        {
+            tracing::error!(%error, "e-mail d'alerte non parti");
+        }
+    }
+}

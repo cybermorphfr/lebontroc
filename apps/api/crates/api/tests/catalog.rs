@@ -4356,6 +4356,42 @@ async fn admin_signalements_audit_recherche_et_kpis(pool: PgPool) {
     assert_eq!(kpis["items_published"], 1);
 }
 
+/// Le tableau de bord exécutif : chaque section répond, et les chiffres
+/// visibles collent aux données posées — les requêtes SQL sont validées
+/// à l'exécution, pas seulement à la compilation.
+#[sqlx::test(migrations = "../../migrations")]
+async fn tableau_de_bord_executif(pool: PgPool) {
+    let (app, emails) = app(pool.clone());
+    let alice = verified_user_at(&app, &emails, "dash1@exemple.fr", "dalice1", "44300").await;
+    let velo = publish_valued(&app, &alice, "Vélo dashboard", 15_000).await;
+    let bob = verified_user(&app, &emails, "dash2@exemple.fr", "dbob1").await;
+    let jeu = publish_valued(&app, &bob, "Jeu dashboard", 4_000).await;
+    simple_proposal(&app, &bob, &jeu, &velo).await;
+
+    // Sans session ni clé : refusé.
+    let response = call(&app, request("GET", "/admin/dashboard", None, None)).await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let dash = body_json(call(&app, admin_request("GET", "/admin/dashboard", None)).await).await;
+    assert_eq!(dash["activite"]["inscrits_total"], 2);
+    assert_eq!(dash["marketplace"]["annonces_actives"], 2);
+    assert_eq!(dash["marketplace"]["propositions_total"], 1);
+    assert_eq!(dash["series"].as_array().expect("series").len(), 30);
+    assert_eq!(
+        dash["series"]
+            .as_array()
+            .expect("series")
+            .last()
+            .expect("jour")["inscriptions"],
+        2
+    );
+    assert_eq!(dash["top_categories"][0]["total"], 2);
+    assert_eq!(dash["qualite"]["litiges_ouverts"], 0);
+    assert_eq!(dash["finances_beta"]["soultes_capturees_cents"], 0);
+    assert!(dash["systeme"]["taille_base"].as_str().is_some());
+    assert_eq!(dash["tendance"]["trocs_7j"], 0);
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn rgpd_export_et_suppression_anonymisante(pool: PgPool) {
     let (app, emails) = app(pool.clone());
